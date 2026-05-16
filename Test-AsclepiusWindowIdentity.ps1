@@ -3,7 +3,8 @@ param(
   [string]$WindowTitle = "Asclepius Identity Probe",
   [int]$KeepOpenSeconds = 2,
   [int]$TargetProcessId = 0,
-  [switch]$AllowCodexTarget
+  [switch]$AllowCodexTarget,
+  [switch]$NoDarkTitlebar
 )
 
 $ErrorActionPreference = "Stop"
@@ -68,6 +69,9 @@ public static class AsclepiusWindowIdentity
 
     [DllImport("user32.dll")]
     private static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
 
     private static readonly PROPERTYKEY AppIdKey =
         new PROPERTYKEY(new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), 5);
@@ -142,6 +146,27 @@ public static class AsclepiusWindowIdentity
         StringBuilder sb = new StringBuilder(1024);
         GetWindowText(hwnd, sb, sb.Capacity);
         return sb.ToString();
+    }
+
+    private static bool SetDwmInt(IntPtr hwnd, int attribute, int value)
+    {
+        int v = value;
+        return DwmSetWindowAttribute(hwnd, attribute, ref v, sizeof(int)) == 0;
+    }
+
+    public static bool SetDarkTitlebar(IntPtr hwnd)
+    {
+        bool ok = SetDwmInt(hwnd, 20, 1);
+        if (!ok)
+        {
+            ok = SetDwmInt(hwnd, 19, 1);
+        }
+
+        // COLORREF values are 0x00BBGGRR. These mirror Codex's dark chrome.
+        ok = SetDwmInt(hwnd, 35, 0x00111111) || ok; // caption
+        ok = SetDwmInt(hwnd, 34, 0x00282828) || ok; // border
+        ok = SetDwmInt(hwnd, 36, 0x00F4F4F4) || ok; // caption text
+        return ok;
     }
 }
 "@
@@ -221,6 +246,10 @@ try {
 
   [AsclepiusWindowIdentity]::SetAppUserModelId($hwnd, $AppUserModelId)
   [AsclepiusWindowIdentity]::SetTitle($hwnd, $WindowTitle)
+  $darkTitlebarOk = $false
+  if (-not $NoDarkTitlebar) {
+    $darkTitlebarOk = [AsclepiusWindowIdentity]::SetDarkTitlebar($hwnd)
+  }
 
   Start-Sleep -Milliseconds 250
   $afterTitle = [AsclepiusWindowIdentity]::GetTitle($hwnd)
@@ -239,6 +268,7 @@ try {
     title_after = $afterTitle
     app_user_model_id_before = $beforeAppId
     app_user_model_id_after = $afterAppId
+    dark_titlebar = $darkTitlebarOk
     note = "Default mode uses a disposable probe window only. It does not touch the live Codex app."
   }
 } finally {

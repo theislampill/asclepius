@@ -99,7 +99,7 @@ personality = "pragmatic"
 sandbox = "elevated"
 
 [model_providers.nous-cloud]
-name = "Asclepius: Nous | deepseek/deepseek-v4-flash"
+name = "Asclepius Nous"
 base_url = "http://127.0.0.1:8655/v1"
 experimental_bearer_token = "local-codex-nous-cloud"
 wire_api = "responses"
@@ -212,6 +212,7 @@ $afterTarget = Get-Process -Id $target.Id -ErrorAction Stop
   process_main_window_title_after = $afterTarget.MainWindowTitle
   app_user_model_id_before = $probeRow.app_user_model_id_before
   app_user_model_id_after = $probeRow.app_user_model_id_after
+  dark_titlebar = $probeRow.dark_titlebar
   temp_root = $tempRoot
   note = "Only a Codex PID/HWND absent from the pre-launch snapshot was modified. Existing Codex windows were not targeted."
 }

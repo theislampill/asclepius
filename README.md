@@ -14,9 +14,9 @@ installations at runtime.
 - Keeps the default Codex profile untouched.
 - Creates an isolated Codex home under `%USERPROFILE%\.codex-nous-cloud`.
 - Adds a desktop launcher named `asclepius.lnk` that runs
-  `Launch-CloudCodexModelPicker.vbs`, shows the Asclepius model/portal
-  supervisor, then opens the real Codex Desktop executable with the isolated
-  profile.
+  `Launch-AsclepiusProviderLauncher.vbs`, shows the Codex-style Asclepius
+  provider/portal launcher, then opens the real Codex Desktop executable with
+  Hermes underneath.
 - Does not install an `Asclepius.exe` host. Earlier window-parenting host
   attempts were removed because they can destabilize Codex.
 - Starts a local-only Responses bridge on `127.0.0.1:8655`.
@@ -31,6 +31,9 @@ installations at runtime.
   - `OpenRouter | deepseek/deepseek-v4-flash`
 - Supports Hermes OAuth login for free Nous models.
 - Supports optional direct provider API keys stored only in the installed local profile.
+- Reuses the user's existing local Codex auth only at launch time by linking or
+  copying `%USERPROFILE%\.codex\auth.json` into the local installed profile.
+  Auth is never included in the redistributable package.
 - Keeps Hermes Golden update and Hermes session deletion as separate helper
   scripts without modifying Codex Desktop's own updater.
 
@@ -122,11 +125,9 @@ From this directory:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-CodexNousCloud.ps1
 ```
 
-Then open `asclepius.lnk` from the desktop. It opens the Asclepius
-model/portal supervisor first. After you choose a route, it launches the real
-signed Codex Desktop app. Alt-Tab for the supervisor identifies it as
-Asclepius; Alt-Tab for the real Codex window still identifies the signed app as
-Codex because Asclepius does not inject into, reparent, or repackage Codex.
+Then open `asclepius.lnk` from the desktop. It opens the Codex-style Asclepius
+provider launcher first. After you choose a route, it launches the real signed
+Codex Desktop app with the isolated Hermes-backed config.
 
 If Nous OAuth login is needed, run:
 
@@ -166,6 +167,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Asclepius.ps1
 ```
 
 Use `-SkipInstalled` for source/package-only checks before installation.
+The smoke harness also scans the redistributable package for auth files,
+credential stores, tokens, cookies, private keys, and common API-key formats.
 
 To run the opt-in identity smoke that opens a fresh isolated Codex window and
 labels only that new window as Asclepius:

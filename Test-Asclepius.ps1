@@ -7,6 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Results = New-Object System.Collections.Generic.List[string]
+$script:LastPackagePath = $null
 
 function Add-Check {
   param([string]$Name, [string]$Value = "ok")
@@ -84,7 +85,7 @@ function Test-Shortcut {
   $target = $shortcut.TargetPath
   Assert-True (Test-Path -LiteralPath $target) "Shortcut target does not exist: $target"
   Assert-True ($target -match 'wscript\.exe$') "Shortcut target is $target, not the safe VBS launcher host."
-  Assert-True ($shortcut.Arguments -like "*Launch-CloudCodexModelPicker.vbs*") "Shortcut does not launch the Asclepius model/portal picker VBS."
+  Assert-True ($shortcut.Arguments -like "*Launch-AsclepiusProviderLauncher.vbs*") "Shortcut does not launch the Asclepius provider launcher VBS."
   Add-Check "desktop_shortcut" ("{0} {1}" -f $target, $shortcut.Arguments)
 }
 
@@ -119,7 +120,7 @@ function Test-Package {
     $archive.Dispose()
   }
 
-  foreach ($required in @("Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Launch-CloudCodexModelPicker.ps1", "Launch-CloudCodexModelPicker.vbs", "Test-Asclepius.ps1", "Test-AsclepiusWindowIdentity.ps1", "Start-AsclepiusCodexIdentitySmoke.ps1")) {
+  foreach ($required in @("Launch-AsclepiusProviderLauncher.ps1", "Launch-AsclepiusProviderLauncher.vbs", "Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Launch-CloudCodexModelPicker.ps1", "Launch-CloudCodexModelPicker.vbs", "Test-Asclepius.ps1", "Test-AsclepiusWindowIdentity.ps1", "Start-AsclepiusCodexIdentitySmoke.ps1")) {
     Assert-True ($entries -contains $required) "Package missing $required"
   }
 
@@ -137,7 +138,62 @@ function Test-Package {
   Assert-True (-not $forbidden) ("Package contains generated/private entries: {0}" -f ($forbidden -join ", "))
 
   $hash = Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256
+  $script:LastPackagePath = $zip.FullName
   Add-Check "package" ("{0} sha256={1}" -f $zip.FullName, $hash.Hash)
+}
+
+function Test-SecretEgress {
+  if ($SkipPackage) {
+    Add-Check "secret_egress" "skipped"
+    return
+  }
+
+  Assert-True (Test-Path -LiteralPath $script:LastPackagePath) "No package path available for secret egress scan."
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $archive = [System.IO.Compression.ZipFile]::OpenRead($script:LastPackagePath)
+  $findings = New-Object System.Collections.Generic.List[string]
+  try {
+    $forbiddenEntries = @($archive.Entries.FullName | Where-Object {
+      $_ -match '(^|/)(auth\.json|cloud-secrets\.json|\.env(\..*)?|.*\.token|.*\.key)$' -or
+      $_ -match '^(codex-home|electron-user-data|logs)/' -or
+      $_ -match '(^|/)(state|logs)_\d*\.sqlite' -or
+      $_ -match '(^|/)bridge-state\.json'
+    })
+    foreach ($entry in $forbiddenEntries) {
+      $findings.Add("forbidden entry: $entry") | Out-Null
+    }
+
+    $patterns = [ordered]@{
+      openai_key = 'sk-(proj-)?[A-Za-z0-9_-]{20,}'
+      github_token = 'github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}'
+      jwt = 'eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}'
+      private_key = '-----BEGIN [A-Z ]*PRIVATE KEY-----'
+      aws_key = 'AKIA[0-9A-Z]{16}'
+      slack_token = 'xox[baprs]-[A-Za-z0-9-]{20,}'
+      token_value = '(?i)(access_token|refresh_token|id_token|session_token|cookie)\s*[:=]\s*["''][^"'']{12,}["'']'
+    }
+
+    foreach ($entry in @($archive.Entries)) {
+      if ($entry.Length -gt 2097152) { continue }
+      if ($entry.FullName -notmatch '\.(ps1|vbs|py|md|toml|json|txt)$') { continue }
+      $reader = New-Object System.IO.StreamReader($entry.Open())
+      try {
+        $text = $reader.ReadToEnd()
+      } finally {
+        $reader.Dispose()
+      }
+      foreach ($name in $patterns.Keys) {
+        if ($text -match $patterns[$name]) {
+          $findings.Add("$name pattern in $($entry.FullName)") | Out-Null
+        }
+      }
+    }
+  } finally {
+    $archive.Dispose()
+  }
+
+  Assert-True ($findings.Count -eq 0) ("Secret egress scan found: {0}" -f ($findings -join "; "))
+  Add-Check "secret_egress" "package entries and text payloads clean"
 }
 
 Test-PowerShellSyntax
@@ -147,5 +203,6 @@ Test-InstalledLauncher
 Test-Shortcut
 Test-DefaultCodexUntouched
 Test-Package
+Test-SecretEgress
 
 $Results | ForEach-Object { Write-Output $_ }

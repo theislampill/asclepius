@@ -2,7 +2,8 @@ param(
   [string]$Model,
   [string]$Workspace = "C:\workspace\ai",
   [switch]$DryRun,
-  [switch]$HostInfoJson
+  [switch]$HostInfoJson,
+  [switch]$NoWindowIdentity
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +12,72 @@ $CodexHome = Join-Path $Root "codex-home"
 $ElectronUserData = Join-Path $Root "electron-user-data"
 $CloudModelsPath = Join-Path $Root "cloud-models.json"
 $InstructionsPath = Join-Path $Root "cloud-codex-instructions.md"
+$WindowIdentityProbe = Join-Path $Root "Test-AsclepiusWindowIdentity.ps1"
+$AppUserModelId = "NousResearch.Asclepius.Codex"
+$WindowTitle = "Asclepius"
+
+function Get-CodexProcessSnapshot {
+  $rows = @()
+  foreach ($name in @("Codex", "codex")) {
+    $rows += Get-Process -Name $name -ErrorAction SilentlyContinue |
+      Where-Object { $_.Path -and $_.Path.EndsWith("\Codex.exe", [System.StringComparison]::OrdinalIgnoreCase) } |
+      ForEach-Object {
+        [pscustomobject]@{
+          Id = $_.Id
+          MainWindowHandle = [int64]$_.MainWindowHandle
+          MainWindowTitle = $_.MainWindowTitle
+          Path = $_.Path
+        }
+      }
+  }
+  $rows | Sort-Object Id -Unique
+}
+
+function Wait-ForFreshCodexWindow {
+  param(
+    [Parameter(Mandatory)]$Before,
+    [Parameter(Mandatory)][datetime]$Deadline
+  )
+
+  $beforePids = @{}
+  $beforeHandles = @{}
+  foreach ($row in @($Before)) {
+    $beforePids[[int]$row.Id] = $true
+    if ([int64]$row.MainWindowHandle -ne 0) {
+      $beforeHandles[[int64]$row.MainWindowHandle] = $true
+    }
+  }
+
+  do {
+    Start-Sleep -Milliseconds 500
+    $after = @(Get-CodexProcessSnapshot)
+    $fresh = @($after | Where-Object {
+      $_.MainWindowHandle -ne 0 -and
+      -not $beforePids.ContainsKey([int]$_.Id) -and
+      -not $beforeHandles.ContainsKey([int64]$_.MainWindowHandle)
+    })
+    if ($fresh.Count -gt 0) {
+      return $fresh | Sort-Object Id | Select-Object -First 1
+    }
+  } while ((Get-Date) -lt $Deadline)
+
+  return $null
+}
+
+function Ensure-CodexAuthLink {
+  $defaultAuth = Join-Path $env:USERPROFILE ".codex\auth.json"
+  $isolatedAuth = Join-Path $CodexHome "auth.json"
+  if (-not (Test-Path -LiteralPath $defaultAuth)) { return "default auth missing" }
+  if (Test-Path -LiteralPath $isolatedAuth) { return "isolated auth present" }
+
+  try {
+    New-Item -ItemType HardLink -Path $isolatedAuth -Target $defaultAuth -Force | Out-Null
+    return "linked to default Codex auth"
+  } catch {
+    Copy-Item -LiteralPath $defaultAuth -Destination $isolatedAuth -Force
+    return "copied default Codex auth"
+  }
+}
 
 function ConvertTo-WslPath {
   param([Parameter(Mandatory)][string]$Path)
@@ -60,7 +127,7 @@ function Set-CloudCodexModel {
     "openrouter" { "OpenRouter" }
     default { $provider }
   }
-  $providerName = "Asclepius: $providerDisplay | $upstream"
+  $providerName = "Asclepius $providerDisplay"
   $configPath = Join-Path $CodexHome "config.toml"
   if (-not (Test-Path -LiteralPath $configPath)) {
     throw "Cloud-Codex config not found: $configPath"
@@ -125,6 +192,7 @@ function Find-CodexDesktopExe {
 }
 
 New-Item -ItemType Directory -Force -Path $CodexHome, $ElectronUserData | Out-Null
+$AuthMode = Ensure-CodexAuthLink
 $ResolvedModel = Resolve-CloudCodexModel -RequestedModel $Model
 Set-CloudCodexModel -SelectedModel $ResolvedModel
 Write-CloudCodexInstructions -SelectedModel $ResolvedModel
@@ -152,6 +220,9 @@ $launchInfo = [PSCustomObject]@{
   CodexCliPath = $CodexCli
   SelectedModel = $ResolvedModel
   HermesWorkdir = ConvertTo-WslPath -Path $Workspace
+  AuthMode = $AuthMode
+  AppUserModelId = $AppUserModelId
+  WindowTitle = $WindowTitle
 }
 
 if ($HostInfoJson) {
@@ -164,4 +235,24 @@ if ($DryRun) {
   exit 0
 }
 
-Start-Process -FilePath $CodexDesktopExe -ArgumentList @("--open-project", $Workspace) -WorkingDirectory $Workspace | Out-Null
+$before = @(Get-CodexProcessSnapshot)
+$started = Start-Process -FilePath $CodexDesktopExe -ArgumentList @("--open-project", $Workspace) -WorkingDirectory $Workspace -PassThru
+
+if (-not $NoWindowIdentity -and (Test-Path -LiteralPath $WindowIdentityProbe)) {
+  $target = Wait-ForFreshCodexWindow -Before $before -Deadline (Get-Date).AddSeconds(60)
+  if ($target) {
+    & $WindowIdentityProbe `
+      -TargetProcessId $target.Id `
+      -AllowCodexTarget `
+      -AppUserModelId $AppUserModelId `
+      -WindowTitle $WindowTitle `
+      -KeepOpenSeconds 0 | Out-Null
+    Start-Sleep -Milliseconds 1200
+    & $WindowIdentityProbe `
+      -TargetProcessId $target.Id `
+      -AllowCodexTarget `
+      -AppUserModelId $AppUserModelId `
+      -WindowTitle $WindowTitle `
+      -KeepOpenSeconds 0 | Out-Null
+  }
+}

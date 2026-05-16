@@ -11,6 +11,8 @@ $required = @(
   "codex_nous_bridge.py",
   "Start-CodexNousCloudServices.ps1",
   "Refresh-NousCatalog.ps1",
+  "Launch-AsclepiusProviderLauncher.ps1",
+  "Launch-AsclepiusProviderLauncher.vbs",
   "Launch-CloudCodexApp.ps1",
   "Launch-CloudCodexApp.vbs",
   "Launch-CloudCodexModelPicker.ps1",
@@ -65,7 +67,7 @@ personality = "pragmatic"
 sandbox = "elevated"
 
 [model_providers.nous-cloud]
-name = "Asclepius: Nous | deepseek/deepseek-v4-flash"
+name = "Asclepius Nous"
 base_url = "http://127.0.0.1:8655/v1"
 experimental_bearer_token = "local-codex-nous-cloud"
 wire_api = "responses"
@@ -88,9 +90,9 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $wsh = New-Object -ComObject WScript.Shell
 $shortcut = $wsh.CreateShortcut($DesktopShortcut)
 $shortcut.TargetPath = "wscript.exe"
-$shortcut.Arguments = "`"$Root\Launch-CloudCodexModelPicker.vbs`""
+$shortcut.Arguments = "`"$Root\Launch-AsclepiusProviderLauncher.vbs`""
 $shortcut.WorkingDirectory = $Root
-$shortcut.Description = "Choose an Asclepius cloud model, then launch real Codex Desktop with the isolated Hermes profile"
+$shortcut.Description = "Choose an Asclepius provider route, then launch real Codex Desktop with Hermes underneath"
 
 $codexExe = $null
 try {
@@ -113,6 +115,6 @@ try {
 Write-Output "Installed to $Root"
 Write-Output "Isolated CODEX_HOME: $CodexHome"
 Write-Output "Desktop shortcut: $DesktopShortcut"
-Write-Output "Shortcut opens the Asclepius model/portal picker through Launch-CloudCodexModelPicker.vbs."
+Write-Output "Shortcut opens the Asclepius provider launcher through Launch-AsclepiusProviderLauncher.vbs."
 Write-Output "Catalog auto-refresh: $refreshMode"
 Write-Output "No Codex binaries, credentials, logs, or Electron state were copied from this package."
