@@ -15,6 +15,7 @@ $required = @(
   "Launch-CloudCodexApp.vbs",
   "Launch-CloudCodexModelPicker.ps1",
   "Launch-CloudCodexModelPicker.vbs",
+  "Test-AsclepiusWindowIdentity.ps1",
   "Manage-AsclepiusHermesSessions.ps1",
   "Update-HermesGolden.ps1",
   "Install-CloudCodexAutoRefresh.ps1",

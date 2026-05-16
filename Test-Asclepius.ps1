@@ -42,6 +42,17 @@ function Test-PythonBridge {
   Add-Check "python_bridge"
 }
 
+function Test-WindowIdentityProbe {
+  $probe = Join-Path $Root "Test-AsclepiusWindowIdentity.ps1"
+  Assert-True (Test-Path -LiteralPath $probe) "Window identity probe script not found: $probe"
+  $result = & $probe -KeepOpenSeconds 0
+  $row = @($result | Where-Object { $_ -is [pscustomobject] } | Select-Object -First 1)[0]
+  Assert-True ($null -ne $row) "Window identity probe did not return a structured result."
+  Assert-True ($row.ok -eq $true) "Window identity probe did not set/read back the expected AppUserModelID and title."
+  Assert-True ($row.touched_codex -eq $false) "Window identity probe unexpectedly touched a Codex process."
+  Add-Check "window_identity_probe" ("{0} {1}" -f $row.hwnd, $row.app_user_model_id_after)
+}
+
 function Test-InstalledLauncher {
   if ($SkipInstalled) {
     Add-Check "installed_launcher" "skipped"
@@ -108,7 +119,7 @@ function Test-Package {
     $archive.Dispose()
   }
 
-  foreach ($required in @("Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Launch-CloudCodexModelPicker.ps1", "Launch-CloudCodexModelPicker.vbs", "Test-Asclepius.ps1")) {
+  foreach ($required in @("Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Launch-CloudCodexModelPicker.ps1", "Launch-CloudCodexModelPicker.vbs", "Test-Asclepius.ps1", "Test-AsclepiusWindowIdentity.ps1")) {
     Assert-True ($entries -contains $required) "Package missing $required"
   }
 
@@ -131,6 +142,7 @@ function Test-Package {
 
 Test-PowerShellSyntax
 Test-PythonBridge
+Test-WindowIdentityProbe
 Test-InstalledLauncher
 Test-Shortcut
 Test-DefaultCodexUntouched
