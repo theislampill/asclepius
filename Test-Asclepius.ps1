@@ -81,6 +81,7 @@ function Test-InstalledLauncher {
   Assert-True ($dryRun.CodexDesktopExe -like "*Codex.exe") "Dry-run did not resolve the real Codex Desktop executable."
   Assert-True ($dryRun.CodexHome -like "*\.codex-nous-cloud\codex-home") "Dry-run did not use the isolated Asclepius Codex home."
   Add-Check "installed_launcher" $dryRun.CodexDesktopExe
+  Add-Check "installed_desktop_auth" $dryRun.DesktopAuthMode
 }
 
 function Test-Shortcut {

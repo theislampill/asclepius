@@ -216,30 +216,31 @@ $watcher = Start-Process -FilePath "powershell.exe" -ArgumentList @(
 ) -WorkingDirectory $Root -WindowStyle Hidden -PassThru
 
 Start-Sleep -Seconds 3
-$probeResult = & $ProbeScript `
+$verifyOnce = & $WatcherScript `
   -TargetProcessId $target.Id `
-  -AllowCodexTarget `
   -AppUserModelId $AppUserModelId `
   -WindowTitle $WindowTitle `
-  -KeepOpenSeconds 0
+  -Once
 
-$probeRow = @($probeResult | Where-Object { $_ -is [pscustomobject] } | Select-Object -First 1)[0]
-if (-not $probeRow) {
-  throw "Window identity probe did not return a structured result."
+$verifyRow = @($verifyOnce | Where-Object { $_ -is [pscustomobject] } | Select-Object -First 1)[0]
+if (-not $verifyRow) {
+  throw "Window identity watcher did not return a structured verify result."
 }
 $afterTarget = Get-Process -Id $target.Id -ErrorAction Stop
 $result = [pscustomobject]@{
-  ok = ($probeRow.ok -eq $true)
+  ok = ($verifyRow.ok -eq $true -and $verifyRow.visible_branded_count -gt 0)
   touched_existing_codex = $false
   started_process_id = $started.Id
   target_process_id = $target.Id
-  target_hwnd = ("0x{0:X}" -f ([int64]$target.MainWindowHandle))
-  target_title_before = $probeRow.title_before
-  target_title_after = $probeRow.title_after
+  target_hwnd = $verifyRow.hwnd
+  target_window_count = $verifyRow.window_count
+  visible_branded_count = $verifyRow.visible_branded_count
+  target_title_before = $verifyRow.title_before
+  target_title_after = $verifyRow.title_after
   process_main_window_title_after = $afterTarget.MainWindowTitle
-  app_user_model_id_before = $probeRow.app_user_model_id_before
-  app_user_model_id_after = $probeRow.app_user_model_id_after
-  dark_titlebar = $probeRow.dark_titlebar
+  app_user_model_id_before = $verifyRow.app_user_model_id_before
+  app_user_model_id_after = $verifyRow.app_user_model_id_after
+  dark_titlebar = $verifyRow.dark_titlebar
   watcher_process_id = $watcher.Id
   watcher_once_ok = $watcherRow.ok
   temp_root = $tempRoot

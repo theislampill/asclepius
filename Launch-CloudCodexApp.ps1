@@ -69,7 +69,27 @@ function Ensure-CodexAuthLink {
   $defaultAuth = Join-Path $env:USERPROFILE ".codex\auth.json"
   $isolatedAuth = Join-Path $CodexHome "auth.json"
   if (-not (Test-Path -LiteralPath $defaultAuth)) { return "default auth missing" }
-  if (Test-Path -LiteralPath $isolatedAuth) { return "isolated auth present" }
+
+  if (Test-Path -LiteralPath $isolatedAuth) {
+    try {
+      $defaultItem = Get-Item -LiteralPath $defaultAuth -Force
+      $isolatedItem = Get-Item -LiteralPath $isolatedAuth -Force
+      if (-not $isolatedItem.PSIsContainer -and $defaultItem.Length -eq $isolatedItem.Length) {
+        $defaultHash = (Get-FileHash -LiteralPath $defaultAuth -Algorithm SHA256).Hash
+        $isolatedHash = (Get-FileHash -LiteralPath $isolatedAuth -Algorithm SHA256).Hash
+        if ($defaultHash -eq $isolatedHash) {
+          return "isolated auth current"
+        }
+      }
+    } catch {}
+
+    $isolatedFull = [System.IO.Path]::GetFullPath($isolatedAuth)
+    $codexHomeFull = [System.IO.Path]::GetFullPath($CodexHome).TrimEnd('\') + '\'
+    if (-not $isolatedFull.StartsWith($codexHomeFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+      throw "Refusing to replace auth outside the isolated Asclepius Codex home."
+    }
+    Remove-Item -LiteralPath $isolatedAuth -Force -ErrorAction SilentlyContinue
+  }
 
   try {
     New-Item -ItemType HardLink -Path $isolatedAuth -Target $defaultAuth -Force | Out-Null
@@ -78,6 +98,130 @@ function Ensure-CodexAuthLink {
     Copy-Item -LiteralPath $defaultAuth -Destination $isolatedAuth -Force
     return "copied default Codex auth"
   }
+}
+
+function Get-DefaultCodexElectronUserDataRoot {
+  $candidates = New-Object System.Collections.Generic.List[string]
+
+  try {
+    Resolve-Path (Join-Path $env:LOCALAPPDATA "Packages\OpenAI.Codex_*\LocalCache\Roaming\Codex") -ErrorAction Stop |
+      Sort-Object Path -Descending |
+      ForEach-Object { $candidates.Add($_.Path) }
+  } catch {}
+
+  foreach ($path in @(
+    (Join-Path $env:APPDATA "Codex"),
+    (Join-Path $env:APPDATA "OpenAI\Codex"),
+    (Join-Path $env:LOCALAPPDATA "OpenAI\Codex")
+  )) {
+    $candidates.Add($path)
+  }
+
+  $isolatedFull = [System.IO.Path]::GetFullPath($ElectronUserData).TrimEnd('\')
+  foreach ($candidate in ($candidates | Select-Object -Unique)) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+    $candidateFull = [System.IO.Path]::GetFullPath($candidate).TrimEnd('\')
+    if ($candidateFull.Equals($isolatedFull, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+    if (-not (Test-Path -LiteralPath $candidateFull)) { continue }
+    if (
+      (Test-Path -LiteralPath (Join-Path $candidateFull "Local State")) -or
+      (Test-Path -LiteralPath (Join-Path $candidateFull "Network\Cookies")) -or
+      (Test-Path -LiteralPath (Join-Path $candidateFull "Local Storage"))
+    ) {
+      return $candidateFull
+    }
+  }
+
+  return $null
+}
+
+function Copy-DesktopAuthItem {
+  param(
+    [Parameter(Mandatory)][string]$SourceRoot,
+    [Parameter(Mandatory)][string]$DestinationRoot,
+    [Parameter(Mandatory)][string]$RelativePath
+  )
+
+  $source = Join-Path $SourceRoot $RelativePath
+  if (-not (Test-Path -LiteralPath $source)) { return "missing" }
+
+  $dest = Join-Path $DestinationRoot $RelativePath
+  $destFull = [System.IO.Path]::GetFullPath($dest)
+  $destRootFull = [System.IO.Path]::GetFullPath($DestinationRoot).TrimEnd('\') + '\'
+  if (-not $destFull.StartsWith($destRootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to copy desktop auth state outside the isolated Asclepius Electron profile."
+  }
+
+  $sourceItem = Get-Item -LiteralPath $source -Force
+  $destParent = Split-Path -Parent $dest
+  if ($destParent) {
+    New-Item -ItemType Directory -Force -Path $destParent | Out-Null
+  }
+
+  if ($sourceItem.PSIsContainer) {
+    if (Test-Path -LiteralPath $dest) {
+      $destItem = Get-Item -LiteralPath $dest -Force
+      if (-not $destItem.PSIsContainer) {
+        Remove-Item -LiteralPath $dest -Force
+      }
+    }
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    Get-ChildItem -LiteralPath $source -Force -ErrorAction Stop |
+      ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination $dest -Recurse -Force -ErrorAction Stop
+      }
+    return "copied"
+  }
+
+  if (Test-Path -LiteralPath $dest) {
+    $destItem = Get-Item -LiteralPath $dest -Force
+    if ($destItem.PSIsContainer) {
+      Remove-Item -LiteralPath $dest -Recurse -Force
+    }
+  }
+  Copy-Item -LiteralPath $source -Destination $dest -Force -ErrorAction Stop
+  return "copied"
+}
+
+function Sync-CodexDesktopAuthState {
+  $sourceRoot = Get-DefaultCodexElectronUserDataRoot
+  if (-not $sourceRoot) { return "default desktop auth missing" }
+
+  $sourceFull = [System.IO.Path]::GetFullPath($sourceRoot).TrimEnd('\')
+  $destFull = [System.IO.Path]::GetFullPath($ElectronUserData).TrimEnd('\')
+  if ($sourceFull.Equals($destFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+    return "shared desktop auth profile"
+  }
+
+  New-Item -ItemType Directory -Force -Path $ElectronUserData | Out-Null
+  $relativeItems = @(
+    "Local State",
+    "Preferences",
+    "Network",
+    "Local Storage",
+    "Session Storage",
+    "IndexedDB",
+    "Partitions",
+    "SharedStorage",
+    "SharedStorage-wal",
+    "DIPS"
+  )
+
+  $copied = 0
+  $failed = 0
+  foreach ($relative in $relativeItems) {
+    try {
+      $result = Copy-DesktopAuthItem -SourceRoot $sourceFull -DestinationRoot $destFull -RelativePath $relative
+      if ($result -eq "copied") { $copied++ }
+    } catch {
+      $failed++
+    }
+  }
+
+  if ($failed -gt 0) {
+    return "desktop auth partially synced ($copied copied, $failed failed)"
+  }
+  return "desktop auth synced ($copied items)"
 }
 
 function ConvertTo-WslPath {
@@ -194,6 +338,7 @@ function Find-CodexDesktopExe {
 
 New-Item -ItemType Directory -Force -Path $CodexHome, $ElectronUserData | Out-Null
 $AuthMode = Ensure-CodexAuthLink
+$DesktopAuthMode = Sync-CodexDesktopAuthState
 $ResolvedModel = Resolve-CloudCodexModel -RequestedModel $Model
 Set-CloudCodexModel -SelectedModel $ResolvedModel
 Write-CloudCodexInstructions -SelectedModel $ResolvedModel
@@ -222,6 +367,7 @@ $launchInfo = [PSCustomObject]@{
   SelectedModel = $ResolvedModel
   HermesWorkdir = ConvertTo-WslPath -Path $Workspace
   AuthMode = $AuthMode
+  DesktopAuthMode = $DesktopAuthMode
   AppUserModelId = $AppUserModelId
   WindowTitle = $WindowTitle
   WindowIdentityWatcher = $WindowIdentityWatcher

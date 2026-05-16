@@ -277,7 +277,7 @@ function Test-ModelCanRun {
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Asclepius" Width="980" Height="640" MinWidth="820" MinHeight="560"
-        WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="CanResizeWithGrip"
+        WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="CanResize"
         Background="#111111" FontFamily="Segoe UI" UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Display">
   <Window.Resources>
@@ -329,11 +329,12 @@ function Test-ModelCanRun {
     </Style>
     <Style x:Key="TitleButton" TargetType="Button">
       <Setter Property="Width" Value="46"/>
-      <Setter Property="Height" Value="32"/>
+      <Setter Property="Height" Value="34"/>
       <Setter Property="Foreground" Value="#D6D6D6"/>
       <Setter Property="Background" Value="Transparent"/>
       <Setter Property="BorderThickness" Value="0"/>
-      <Setter Property="FontSize" Value="14"/>
+      <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+      <Setter Property="FontSize" Value="10"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
@@ -346,6 +347,26 @@ function Test-ModelCanRun {
               </Trigger>
               <Trigger Property="IsPressed" Value="True">
                 <Setter TargetName="TitleButtonBorder" Property="Background" Value="#333333"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="CloseTitleButton" TargetType="Button" BasedOn="{StaticResource TitleButton}">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="TitleButtonBorder" Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="TitleButtonBorder" Property="Background" Value="#C42B1C"/>
+                <Setter Property="Foreground" Value="#FFFFFF"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="TitleButtonBorder" Property="Background" Value="#A42618"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -460,9 +481,9 @@ function Test-ModelCanRun {
       <Border Name="TitleBar" Grid.Row="0" Background="#111111" BorderBrush="#262626" BorderThickness="0,0,0,1">
         <DockPanel LastChildFill="True">
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-            <Button Name="MinimizeButton" Style="{StaticResource TitleButton}" Content="-"/>
-            <Button Name="MaximizeButton" Style="{StaticResource TitleButton}" Content="[]"/>
-            <Button Name="CloseButton" Style="{StaticResource TitleButton}" Content="X"/>
+            <Button Name="MinimizeButton" Style="{StaticResource TitleButton}" Content="&#xE921;"/>
+            <Button Name="MaximizeButton" Style="{StaticResource TitleButton}" Content="&#xE922;"/>
+            <Button Name="CloseButton" Style="{StaticResource CloseTitleButton}" Content="&#xE8BB;"/>
           </StackPanel>
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
             <Border Width="18" Height="18" CornerRadius="6" Background="#426DFF" Margin="14,0,14,0"/>

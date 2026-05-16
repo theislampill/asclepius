@@ -12,12 +12,14 @@ $ErrorActionPreference = "Stop"
 
 $source = @"
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 
 public static class AsclepiusWindowKeeper
 {
     private const ushort VT_LPWSTR = 31;
+    private const uint GW_OWNER = 4;
 
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
     public struct PROPERTYKEY
@@ -70,11 +72,33 @@ public static class AsclepiusWindowKeeper
     [DllImport("user32.dll")]
     private static extern bool IsWindow(IntPtr hWnd);
 
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
 
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
+
     private static readonly PROPERTYKEY AppIdKey =
         new PROPERTYKEY(new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), 5);
+    private static readonly PROPERTYKEY RelaunchDisplayNameKey =
+        new PROPERTYKEY(new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), 4);
 
     private static IPropertyStore GetStore(IntPtr hwnd)
     {
@@ -93,16 +117,16 @@ public static class AsclepiusWindowKeeper
         return store;
     }
 
-    public static void SetAppUserModelId(IntPtr hwnd, string appUserModelId)
+    private static void SetStringProperty(IntPtr hwnd, PROPERTYKEY key, string value)
     {
         IPropertyStore store = GetStore(hwnd);
         PROPVARIANT pv = new PROPVARIANT();
         pv.vt = VT_LPWSTR;
-        pv.pointerValue = Marshal.StringToCoTaskMemUni(appUserModelId);
+        pv.pointerValue = Marshal.StringToCoTaskMemUni(value);
         try
         {
-            PROPERTYKEY key = AppIdKey;
-            store.SetValue(ref key, ref pv);
+            PROPERTYKEY writableKey = key;
+            store.SetValue(ref writableKey, ref pv);
             store.Commit();
         }
         finally
@@ -110,6 +134,16 @@ public static class AsclepiusWindowKeeper
             PropVariantClear(ref pv);
             Marshal.ReleaseComObject(store);
         }
+    }
+
+    public static void SetAppUserModelId(IntPtr hwnd, string appUserModelId)
+    {
+        SetStringProperty(hwnd, AppIdKey, appUserModelId);
+    }
+
+    public static void SetRelaunchDisplayName(IntPtr hwnd, string displayName)
+    {
+        SetStringProperty(hwnd, RelaunchDisplayNameKey, displayName);
     }
 
     public static string GetAppUserModelId(IntPtr hwnd)
@@ -146,6 +180,46 @@ public static class AsclepiusWindowKeeper
         StringBuilder sb = new StringBuilder(1024);
         GetWindowText(hwnd, sb, sb.Capacity);
         return sb.ToString();
+    }
+
+    public static string GetClass(IntPtr hwnd)
+    {
+        StringBuilder sb = new StringBuilder(256);
+        GetClassName(hwnd, sb, sb.Capacity);
+        return sb.ToString();
+    }
+
+    public static int GetCloaked(IntPtr hwnd)
+    {
+        int value = 0;
+        DwmGetWindowAttribute(hwnd, 14, out value, sizeof(int));
+        return value;
+    }
+
+    public static bool HasOwner(IntPtr hwnd)
+    {
+        return GetWindow(hwnd, GW_OWNER) != IntPtr.Zero;
+    }
+
+    public static bool IsVisible(IntPtr hwnd)
+    {
+        return IsWindowVisible(hwnd);
+    }
+
+    public static IntPtr[] GetProcessWindows(int processId)
+    {
+        List<IntPtr> windows = new List<IntPtr>();
+        EnumWindows(delegate(IntPtr hwnd, IntPtr lParam)
+        {
+            uint pid;
+            GetWindowThreadProcessId(hwnd, out pid);
+            if (pid == (uint)processId)
+            {
+                windows.Add(hwnd);
+            }
+            return true;
+        }, IntPtr.Zero);
+        return windows.ToArray();
     }
 
     private static bool SetDwmInt(IntPtr hwnd, int attribute, int value)
@@ -210,36 +284,121 @@ $form.Controls.Add($label)
 function Set-AsclepiusWindowIdentity {
   param([Parameter(Mandatory)][int]$ProcessId)
 
+  try {
+  $phase = "process"
   $process = Get-Process -Id $ProcessId -ErrorAction Stop
-  $hwndValue = [int64]$process.MainWindowHandle
-  if ($hwndValue -eq 0) {
+  $mainWindowHandleValue = if ($process.MainWindowHandle -is [IntPtr]) { $process.MainWindowHandle.ToInt64() } else { [int64]$process.MainWindowHandle }
+  $phase = "enumerate"
+  $windows = @([AsclepiusWindowKeeper]::GetProcessWindows($ProcessId) | ForEach-Object {
+    $script:AsclepiusWatcherPhase = "window-info"
+    $hwndValue = if ($_ -is [IntPtr]) { $_.ToInt64() } else { [int64]$_ }
+    $hwnd = [IntPtr]::new($hwndValue)
+    $title = [AsclepiusWindowKeeper]::GetTitle($hwnd)
+    $className = [AsclepiusWindowKeeper]::GetClass($hwnd)
+    $visible = [AsclepiusWindowKeeper]::IsVisible($hwnd)
+    $cloaked = [AsclepiusWindowKeeper]::GetCloaked($hwnd)
+    $hasOwner = [AsclepiusWindowKeeper]::HasOwner($hwnd)
+    [pscustomobject]@{
+      Hwnd = $hwnd
+      HwndValue = $hwndValue
+      HwndHex = ("0x{0:X}" -f $hwndValue)
+      Title = $title
+      ClassName = $className
+      Visible = $visible
+      Cloaked = $cloaked
+      HasOwner = $hasOwner
+      Score = if ($visible -and $cloaked -eq 0 -and -not $hasOwner) { 0 } elseif ($visible -and $cloaked -eq 0) { 1 } elseif ($mainWindowHandleValue -eq $hwndValue) { 2 } else { 3 }
+    }
+  })
+
+  $phase = "window-count"
+  if ($windows.Count -eq 0) {
     return [pscustomobject]@{
       ok = $false
       pid = $ProcessId
       hwnd = "0x0"
-      reason = "main window handle not ready"
+      window_count = 0
+      reason = "no top-level windows found"
     }
   }
 
-  $hwnd = [IntPtr]$hwndValue
-  $beforeTitle = [AsclepiusWindowKeeper]::GetTitle($hwnd)
-  $beforeAppId = [AsclepiusWindowKeeper]::GetAppUserModelId($hwnd)
-  [AsclepiusWindowKeeper]::SetAppUserModelId($hwnd, $AppUserModelId)
-  [AsclepiusWindowKeeper]::SetTitle($hwnd, $WindowTitle)
-  $darkOk = [AsclepiusWindowKeeper]::SetDarkTitlebar($hwnd)
-  Start-Sleep -Milliseconds 50
-  $afterTitle = [AsclepiusWindowKeeper]::GetTitle($hwnd)
-  $afterAppId = [AsclepiusWindowKeeper]::GetAppUserModelId($hwnd)
+  $phase = "order"
+  $ordered = @($windows | Sort-Object Score,HwndValue)
+  $changed = New-Object System.Collections.Generic.List[object]
+  $darkOk = $false
+  foreach ($window in $ordered) {
+    $phase = "apply $($window.HwndHex)"
+    $hwnd = [IntPtr]::new([int64]$window.HwndValue)
+    try {
+      $beforeTitle = [AsclepiusWindowKeeper]::GetTitle($hwnd)
+      $beforeAppId = [AsclepiusWindowKeeper]::GetAppUserModelId($hwnd)
+      [AsclepiusWindowKeeper]::SetAppUserModelId($hwnd, $AppUserModelId)
+      [AsclepiusWindowKeeper]::SetRelaunchDisplayName($hwnd, $WindowTitle)
+      [AsclepiusWindowKeeper]::SetTitle($hwnd, $WindowTitle)
+      $windowDarkOk = [AsclepiusWindowKeeper]::SetDarkTitlebar($hwnd)
+      $darkOk = $darkOk -or $windowDarkOk
+      Start-Sleep -Milliseconds 15
+      $changed.Add([pscustomobject]@{
+        hwnd = $window.HwndHex
+        visible = $window.Visible
+        cloaked = $window.Cloaked
+        has_owner = $window.HasOwner
+        class = $window.ClassName
+        title_before = $beforeTitle
+        title_after = [AsclepiusWindowKeeper]::GetTitle($hwnd)
+        app_user_model_id_before = $beforeAppId
+        app_user_model_id_after = [AsclepiusWindowKeeper]::GetAppUserModelId($hwnd)
+      }) | Out-Null
+    } catch {}
+  }
 
+  $phase = "primary"
+  Start-Sleep -Milliseconds 50
+  $primary = @($changed | Where-Object { $_.visible -and $_.cloaked -eq 0 -and -not $_.has_owner } | Select-Object -First 1)[0]
+  if (-not $primary) {
+    $primary = @($changed | Where-Object { $_.visible -and $_.cloaked -eq 0 } | Select-Object -First 1)[0]
+  }
+  if (-not $primary) {
+    $primary = @($changed | Select-Object -First 1)[0]
+  }
+  $phase = "primary-selected"
+  if (-not $primary) {
+    return [pscustomobject]@{
+      ok = $false
+      pid = $ProcessId
+      hwnd = "0x0"
+      window_count = $windows.Count
+      reason = "no windows could be branded"
+    }
+  }
+
+  $phase = "return"
+  $visibleBrandedCount = 0
+  foreach ($item in $changed) {
+    if ($item.visible -and $item.cloaked -eq 0) {
+      $visibleBrandedCount++
+    }
+  }
   [pscustomobject]@{
-    ok = ($afterTitle -eq $WindowTitle -and $afterAppId -eq $AppUserModelId)
+    ok = ($primary.title_after -eq $WindowTitle -and $primary.app_user_model_id_after -eq $AppUserModelId)
     pid = $ProcessId
-    hwnd = ("0x{0:X}" -f $hwndValue)
-    title_before = $beforeTitle
-    title_after = $afterTitle
-    app_user_model_id_before = $beforeAppId
-    app_user_model_id_after = $afterAppId
+    hwnd = $primary.hwnd
+    window_count = $windows.Count
+    branded_count = $changed.Count
+    visible_branded_count = $visibleBrandedCount
+    title_before = $primary.title_before
+    title_after = $primary.title_after
+    app_user_model_id_before = $primary.app_user_model_id_before
+    app_user_model_id_after = $primary.app_user_model_id_after
     dark_titlebar = $darkOk
+  }
+  } catch {
+    [pscustomobject]@{
+      ok = $false
+      pid = $ProcessId
+      hwnd = "0x0"
+      reason = "${phase}: $($_.Exception.Message)"
+    }
   }
 }
 
@@ -259,7 +418,7 @@ if ($SelfTest) {
     } while ($process.MainWindowHandle -eq 0 -and (Get-Date) -lt $deadline)
 
     $first = Set-AsclepiusWindowIdentity -ProcessId $TargetProcessId
-    [AsclepiusWindowKeeper]::SetTitle(([IntPtr]([int64](Get-Process -Id $TargetProcessId).MainWindowHandle)), "Codex")
+    [AsclepiusWindowKeeper]::SetTitle(([IntPtr]::new([int64](Get-Process -Id $TargetProcessId).MainWindowHandle)), "Codex")
     Start-Sleep -Milliseconds 150
     $second = Set-AsclepiusWindowIdentity -ProcessId $TargetProcessId
     [pscustomobject]@{
@@ -270,6 +429,8 @@ if ($SelfTest) {
       app_user_model_id_after = $second.app_user_model_id_after
       dark_titlebar = $second.dark_titlebar
       touched_codex = $false
+      first_reason = $first.reason
+      repaired_reason = $second.reason
     }
   } finally {
     if ($target) {

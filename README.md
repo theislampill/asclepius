@@ -31,9 +31,10 @@ installations at runtime.
   - `OpenRouter | deepseek/deepseek-v4-flash`
 - Supports Hermes OAuth login for free Nous models.
 - Supports optional direct provider API keys stored only in the installed local profile.
-- Reuses the user's existing local Codex auth only at launch time by linking or
-  copying `%USERPROFILE%\.codex\auth.json` into the local installed profile.
-  Auth is never included in the redistributable package.
+- Reuses the user's existing local Codex auth only at launch time by linking
+  `%USERPROFILE%\.codex\auth.json` and seeding the isolated generated Electron
+  profile from the local signed-in Codex profile. Auth and Electron state are
+  never included in the redistributable package.
 - Keeps Hermes Golden update and Hermes session deletion as separate helper
   scripts without modifying Codex Desktop's own updater.
 
