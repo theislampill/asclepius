@@ -16,6 +16,33 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
+$chromeSource = @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class AsclepiusLauncherChrome
+{
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
+    private static void SetDwmInt(IntPtr hwnd, int attribute, int value)
+    {
+        int v = value;
+        DwmSetWindowAttribute(hwnd, attribute, ref v, sizeof(int));
+    }
+
+    public static void Apply(IntPtr hwnd)
+    {
+        SetDwmInt(hwnd, 20, 1);
+        SetDwmInt(hwnd, 19, 1);
+        SetDwmInt(hwnd, 35, 0x00111111);
+        SetDwmInt(hwnd, 34, 0x00282828);
+        SetDwmInt(hwnd, 36, 0x00F4F4F4);
+    }
+}
+"@
+Add-Type -TypeDefinition $chromeSource -Language CSharp
+
 function ConvertTo-Visibility {
   param([bool]$Visible)
   if ($Visible) { return [System.Windows.Visibility]::Visible }
@@ -277,7 +304,7 @@ function Test-ModelCanRun {
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Asclepius" Width="980" Height="640" MinWidth="820" MinHeight="560"
-        WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="CanResize"
+        WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="NoResize"
         Background="#111111" FontFamily="Segoe UI" UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Display">
   <Window.Resources>
@@ -602,6 +629,13 @@ $names = @(
 foreach ($name in $names) {
   Set-Variable -Name $name -Value $script:Window.FindName($name) -Scope Script
 }
+
+$script:Window.Add_SourceInitialized({
+  try {
+    $helper = New-Object System.Windows.Interop.WindowInteropHelper($script:Window)
+    [AsclepiusLauncherChrome]::Apply($helper.Handle)
+  } catch {}
+})
 
 $script:Catalog = $null
 $script:AllModels = @()

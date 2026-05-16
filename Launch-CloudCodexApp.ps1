@@ -18,23 +18,71 @@ $AppUserModelId = "NousResearch.Asclepius.Codex"
 $WindowTitle = "Asclepius"
 
 function Get-CodexProcessSnapshot {
+  $asclepiusUserData = [System.IO.Path]::GetFullPath($ElectronUserData).TrimEnd('\')
+  $userDataByPid = @{}
+  $parentByPid = @{}
+  $knownCodexPids = @{}
+  $asclepiusFamilyPids = @{}
+  try {
+    $cimRows = @(Get-CimInstance Win32_Process -Filter "name = 'Codex.exe'" -ErrorAction Stop)
+    foreach ($row in $cimRows) {
+      $pid = [int]$row.ProcessId
+      $parentByPid[$pid] = [int]$row.ParentProcessId
+      $knownCodexPids[$pid] = $true
+
+      $commandLine = [string]$row.CommandLine
+      $userData = $null
+      if ($commandLine -match '--user-data-dir=(?:"([^"]+)"|(\S+))') {
+        $userData = if ($matches[1]) { $matches[1] } else { $matches[2] }
+      } elseif ($commandLine -match '--user-data-dir\s+(?:"([^"]+)"|(\S+))') {
+        $userData = if ($matches[1]) { $matches[1] } else { $matches[2] }
+      }
+      if (-not [string]::IsNullOrWhiteSpace($userData)) {
+        try {
+          $userDataByPid[$pid] = [System.IO.Path]::GetFullPath($userData).TrimEnd('\')
+        } catch {
+          $userDataByPid[$pid] = $userData.TrimEnd('\')
+        }
+      }
+    }
+
+    foreach ($pid in @($userDataByPid.Keys)) {
+      $userData = $userDataByPid[$pid]
+      if (-not $userData.Equals($asclepiusUserData, [System.StringComparison]::OrdinalIgnoreCase)) {
+        continue
+      }
+
+      $current = [int]$pid
+      for ($i = 0; $i -lt 12; $i++) {
+        $asclepiusFamilyPids[$current] = $true
+        if (-not $parentByPid.ContainsKey($current)) { break }
+        $parent = [int]$parentByPid[$current]
+        if (-not $knownCodexPids.ContainsKey($parent)) { break }
+        $current = $parent
+      }
+    }
+  } catch {}
+
   $rows = @()
   foreach ($name in @("Codex", "codex")) {
     $rows += Get-Process -Name $name -ErrorAction SilentlyContinue |
       Where-Object { $_.Path -and $_.Path.EndsWith("\Codex.exe", [System.StringComparison]::OrdinalIgnoreCase) } |
       ForEach-Object {
+        $userData = $userDataByPid[[int]$_.Id]
         [pscustomobject]@{
           Id = $_.Id
           MainWindowHandle = [int64]$_.MainWindowHandle
           MainWindowTitle = $_.MainWindowTitle
           Path = $_.Path
+          UserDataDir = $userData
+          IsAsclepiusProfile = $asclepiusFamilyPids.ContainsKey([int]$_.Id)
         }
       }
   }
   $rows | Sort-Object Id -Unique
 }
 
-function Wait-ForFreshCodexWindow {
+function Wait-ForAsclepiusCodexWindow {
   param(
     [Parameter(Mandatory)]$Before,
     [Parameter(Mandatory)][datetime]$Deadline
@@ -52,13 +100,29 @@ function Wait-ForFreshCodexWindow {
   do {
     Start-Sleep -Milliseconds 500
     $after = @(Get-CodexProcessSnapshot)
-    $fresh = @($after | Where-Object {
+    $asclepiusTargets = @($after | Where-Object {
+      $_.IsAsclepiusProfile -and
+      $_.MainWindowHandle -ne 0
+    })
+    $freshAsclepius = @($asclepiusTargets | Where-Object {
       $_.MainWindowHandle -ne 0 -and
       -not $beforePids.ContainsKey([int]$_.Id) -and
       -not $beforeHandles.ContainsKey([int64]$_.MainWindowHandle)
     })
-    if ($fresh.Count -gt 0) {
-      return $fresh | Sort-Object Id | Select-Object -First 1
+    if ($freshAsclepius.Count -gt 0) {
+      return $freshAsclepius | Sort-Object Id | Select-Object -First 1
+    }
+    if ($asclepiusTargets.Count -gt 0) {
+      return $asclepiusTargets | Sort-Object Id | Select-Object -First 1
+    }
+
+    $freshFallback = @($after | Where-Object {
+      $_.MainWindowHandle -ne 0 -and
+      -not $beforePids.ContainsKey([int]$_.Id) -and
+      -not $beforeHandles.ContainsKey([int64]$_.MainWindowHandle)
+    })
+    if ($freshFallback.Count -gt 0) {
+      return $freshFallback | Sort-Object Id | Select-Object -First 1
     }
   } while ((Get-Date) -lt $Deadline)
 
@@ -387,7 +451,7 @@ $before = @(Get-CodexProcessSnapshot)
 $started = Start-Process -FilePath $CodexDesktopExe -ArgumentList @("--open-project", $Workspace) -WorkingDirectory $Workspace -PassThru
 
 if (-not $NoWindowIdentity) {
-  $target = Wait-ForFreshCodexWindow -Before $before -Deadline (Get-Date).AddSeconds(60)
+  $target = Wait-ForAsclepiusCodexWindow -Before $before -Deadline (Get-Date).AddSeconds(60)
   if ($target) {
     if (Test-Path -LiteralPath $WindowIdentityWatcher) {
       & $WindowIdentityWatcher `
