@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Local Responses API bridge for Codex -> Hermes Nous proxy.
+"""Local Responses API bridge for Codex -> Hermes Agent/cloud providers.
 
 The default Codex app stays untouched. This bridge gives an isolated Codex
-profile a Responses-compatible endpoint while Hermes' built-in proxy handles
-Nous Portal auth and forwards to Nous' Chat Completions API.
+profile a Responses-compatible endpoint and routes turns through Hermes Agent
+by default. A raw provider proxy mode is still available for diagnostics.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
+import shlex
+import subprocess
+import tempfile
 import time
 import uuid
 import urllib.error
@@ -28,6 +32,11 @@ OPENROUTER_BASE = os.environ.get("CODEX_OPENROUTER_BASE", "https://openrouter.ai
 SECRETS_PATH = os.environ.get("CODEX_CLOUD_SECRETS_PATH", os.path.join(ROOT, "cloud-secrets.json"))
 CATALOG_PATH = os.environ.get("CODEX_CLOUD_MODELS_PATH", os.path.join(ROOT, "cloud-models.json"))
 DEFAULT_MODEL = os.environ.get("CODEX_NOUS_DEFAULT_MODEL", "nous/deepseek/deepseek-v4-flash")
+RUNTIME_MODE = os.environ.get("CODEX_CLOUD_RUNTIME_MODE", "hermes_agent").strip().lower()
+HERMES_BIN = os.environ.get("CODEX_HERMES_BIN", "/home/agent/.local/bin/hermes")
+HERMES_WSL_DISTRO = os.environ.get("CODEX_HERMES_WSL_DISTRO", "Ubuntu")
+HERMES_WORKDIR = os.environ.get("CODEX_HERMES_WORKDIR", "/home/agent")
+HERMES_TIMEOUT_SECONDS = int(os.environ.get("CODEX_HERMES_TIMEOUT_SECONDS", "600"))
 
 RESPONSES: dict[str, dict[str, Any]] = {}
 
@@ -80,6 +89,16 @@ def nous_key() -> str:
 
 def decode_route_model_id(value: str) -> str:
     return value.replace("__colon__", ":")
+
+
+def windows_path_to_wsl(path: str) -> str:
+    full = os.path.abspath(path)
+    drive, rest = os.path.splitdrive(full)
+    if not drive:
+        return full.replace("\\", "/")
+    drive_letter = drive.rstrip(":").lower()
+    rest_wsl = rest.replace("\\", "/")
+    return f"/mnt/{drive_letter}{rest_wsl}"
 
 
 def parse_model_route(model: str) -> dict[str, str]:
@@ -205,6 +224,145 @@ def responses_tools_to_chat(tools: Any) -> list[dict[str, Any]]:
     return out
 
 
+def responses_body_to_prompt(body: dict[str, Any]) -> str:
+    parts: list[str] = []
+    instructions = flatten_content(body.get("instructions")).strip()
+    if instructions:
+        parts.append(f"System instructions from Codex:\n{instructions}")
+
+    incoming = body.get("input")
+    if isinstance(incoming, str):
+        if incoming.strip():
+            parts.append(incoming.strip())
+    else:
+        if isinstance(incoming, dict):
+            incoming = [incoming]
+        if isinstance(incoming, list):
+            for entry in incoming:
+                if isinstance(entry, str):
+                    if entry.strip():
+                        parts.append(entry.strip())
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                typ = entry.get("type")
+                if typ == "function_call_output":
+                    content = flatten_content(entry.get("output")).strip()
+                    if content:
+                        parts.append(f"Tool output:\n{content}")
+                    continue
+                role = entry.get("role") or "user"
+                content = flatten_content(entry.get("content")).strip()
+                if content:
+                    parts.append(f"{role}:\n{content}")
+
+    return "\n\n".join(parts).strip() or "Continue."
+
+
+def strip_ansi(value: str) -> str:
+    return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", value)
+
+
+def parse_hermes_output(output: str) -> tuple[str, str | None]:
+    clean = strip_ansi(output.replace("\r\n", "\n"))
+    session_id: str | None = None
+    final_lines: list[str] = []
+    for line in clean.splitlines():
+        stripped = line.strip()
+        match = re.match(r"^(?:session_id|Session):\s*(\S+)", stripped, flags=re.IGNORECASE)
+        if match:
+            session_id = match.group(1)
+            continue
+        if stripped.startswith("Resume this session with:"):
+            continue
+        if stripped.startswith("hermes --resume "):
+            maybe = stripped.rsplit(" ", 1)[-1].strip()
+            if maybe:
+                session_id = maybe
+            continue
+        if "Resumed session" in stripped:
+            continue
+        if stripped.startswith("Duration:") or stripped.startswith("Messages:"):
+            continue
+        final_lines.append(line)
+    text = "\n".join(final_lines).strip()
+    return text, session_id
+
+
+def run_hermes_turn(route: dict[str, str], body: dict[str, Any]) -> tuple[str, str | None]:
+    prompt = responses_body_to_prompt(body)
+    prev = body.get("previous_response_id")
+    resume_session = ""
+    if prev and prev in RESPONSES:
+        resume_session = str(RESPONSES[prev].get("hermes_session_id") or "")
+
+    provider = route["provider"]
+    upstream_model = route["upstream_model"]
+
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".txt", dir=ROOT, delete=False) as handle:
+        handle.write(prompt)
+        prompt_path = handle.name
+    hermes_bin_q = shlex.quote(HERMES_BIN)
+    hermes_workdir_q = shlex.quote(HERMES_WORKDIR)
+    script_text = f"""#!/usr/bin/env bash
+set -euo pipefail
+prompt_file="$1"
+provider="$2"
+model="$3"
+resume_session="${{4:-}}"
+prompt="$(cat "$prompt_file")"
+cd {hermes_workdir_q}
+args=({hermes_bin_q} chat -Q --source tool --provider "$provider" --model "$model" --query "$prompt")
+if [ -n "$resume_session" ]; then
+  args+=(--resume "$resume_session")
+fi
+exec "${{args[@]}}"
+"""
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".sh", dir=ROOT, delete=False, newline="\n") as handle:
+        handle.write(script_text)
+        script_path = handle.name
+
+    try:
+        prompt_wsl = windows_path_to_wsl(prompt_path)
+        script_wsl = windows_path_to_wsl(script_path)
+        completed = subprocess.run(
+            [
+                "wsl.exe",
+                "-d",
+                HERMES_WSL_DISTRO,
+                "--",
+                "bash",
+                script_wsl,
+                prompt_wsl,
+                provider,
+                upstream_model,
+                resume_session,
+            ],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=HERMES_TIMEOUT_SECONDS,
+        )
+    finally:
+        try:
+            os.unlink(prompt_path)
+        except OSError:
+            pass
+        try:
+            os.unlink(script_path)
+        except OSError:
+            pass
+
+    text, session_id = parse_hermes_output(completed.stdout or "")
+    if completed.returncode != 0:
+        message = text or completed.stdout or f"Hermes exited with code {completed.returncode}"
+        raise BridgeError(message, 502, "hermes_runtime_error")
+    return text or "(Hermes returned no final text.)", session_id or resume_session or None
+
+
 def chat_tool_call_to_response(call: dict[str, Any]) -> dict[str, Any]:
     fn = call.get("function") or {}
     return {
@@ -300,6 +458,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "nous_direct_upstream": NOUS_DIRECT_BASE,
                 "openrouter_upstream": OPENROUTER_BASE,
                 "default_model": DEFAULT_MODEL,
+                "runtime_mode": RUNTIME_MODE,
+                "hermes_bin": HERMES_BIN,
+                "hermes_wsl_distro": HERMES_WSL_DISTRO,
                 "providers": {
                     "nous": {
                         "ready": True,
@@ -375,6 +536,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
         except BridgeError as exc:
             write_json(self, {"error": {"message": str(exc), "type": exc.typ}}, exc.status)
             return
+        if RUNTIME_MODE in {"hermes", "hermes_agent", "agent"}:
+            if stream:
+                self.handle_hermes_streaming(body, route)
+            else:
+                self.handle_hermes_non_streaming(body, route)
+            return
         messages = responses_input_to_chat(body)
         chat_payload: dict[str, Any] = {
             "model": route["upstream_model"],
@@ -393,6 +560,136 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.handle_streaming(body, chat_payload, messages)
         else:
             self.handle_non_streaming(body, chat_payload, messages)
+
+    def handle_hermes_non_streaming(self, body: dict[str, Any], route: dict[str, str]) -> None:
+        rid = response_id()
+        model = route["requested_model"]
+        try:
+            text, hermes_session_id = run_hermes_turn(route, body)
+        except BridgeError as exc:
+            write_json(self, {"error": {"message": str(exc), "type": exc.typ}}, exc.status)
+            return
+        except Exception as exc:  # noqa: BLE001
+            write_json(self, {"error": {"message": str(exc), "type": "hermes_runtime_error"}}, 502)
+            return
+
+        output = build_message_item(text)
+        response = {
+            "id": rid,
+            "object": "response",
+            "created_at": now(),
+            "status": "completed",
+            "model": model,
+            "output": [output],
+            "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            "metadata": {
+                "runtime": "hermes_agent",
+                "hermes_session_id": hermes_session_id,
+                "provider": route["provider"],
+                "upstream_model": route["upstream_model"],
+            },
+        }
+        RESPONSES[rid] = {
+            "response": response,
+            "chat_history": [],
+            "hermes_session_id": hermes_session_id,
+        }
+        write_json(self, response)
+
+    def handle_hermes_streaming(self, body: dict[str, Any], route: dict[str, str]) -> None:
+        rid = response_id()
+        model = route["requested_model"]
+        created = now()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        seq = 0
+
+        def emit(event: str, data: dict[str, Any]) -> None:
+            nonlocal seq
+            self.wfile.write(sse_payload(event, data, seq))
+            self.wfile.flush()
+            seq += 1
+
+        def envelope(status: str, output: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+            return {
+                "id": rid,
+                "object": "response",
+                "created_at": created,
+                "status": status,
+                "model": model,
+                "output": output or [],
+                "metadata": {
+                    "runtime": "hermes_agent",
+                    "provider": route["provider"],
+                    "upstream_model": route["upstream_model"],
+                },
+            }
+
+        emit("response.created", {"type": "response.created", "response": envelope("in_progress")})
+        msg_id = item_id("msg")
+        emit("response.output_item.added", {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {
+                "id": msg_id,
+                "type": "message",
+                "status": "in_progress",
+                "role": "assistant",
+                "content": [],
+            },
+        })
+
+        try:
+            text, hermes_session_id = run_hermes_turn(route, body)
+        except BridgeError as exc:
+            failed = envelope("failed")
+            failed["error"] = {"message": str(exc), "type": exc.typ}
+            emit("response.failed", {"type": "response.failed", "response": failed})
+            return
+        except Exception as exc:  # noqa: BLE001
+            failed = envelope("failed")
+            failed["error"] = {"message": str(exc), "type": "hermes_runtime_error"}
+            emit("response.failed", {"type": "response.failed", "response": failed})
+            return
+
+        # Hermes CLI currently returns final text after its own agent loop. Emit
+        # the final answer as a small synthetic stream so Codex's app protocol
+        # still receives the event shape it expects.
+        for chunk in re.findall(r".{1,80}(?:\s+|$)", text, flags=re.DOTALL) or [text]:
+            emit("response.output_text.delta", {
+                "type": "response.output_text.delta",
+                "item_id": msg_id,
+                "output_index": 0,
+                "content_index": 0,
+                "delta": chunk,
+                "logprobs": [],
+            })
+
+        emit("response.output_text.done", {
+            "type": "response.output_text.done",
+            "item_id": msg_id,
+            "output_index": 0,
+            "content_index": 0,
+            "text": text,
+            "logprobs": [],
+        })
+        msg_item = build_message_item(text, msg_id=msg_id)
+        emit("response.output_item.done", {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": msg_item,
+        })
+        completed = envelope("completed", [msg_item])
+        completed["usage"] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        completed["metadata"]["hermes_session_id"] = hermes_session_id
+        RESPONSES[rid] = {
+            "response": completed,
+            "chat_history": [],
+            "hermes_session_id": hermes_session_id,
+        }
+        emit("response.completed", {"type": "response.completed", "response": completed})
 
     def handle_non_streaming(
         self,
@@ -600,7 +897,8 @@ def main() -> None:
     server = ThreadingHTTPServer((HOST, PORT), BridgeHandler)
     print(
         f"Codex cloud bridge listening on http://{HOST}:{PORT}/v1 "
-        f"(nous -> {UPSTREAM_BASE} or {NOUS_DIRECT_BASE}, openrouter -> {OPENROUTER_BASE})",
+        f"(runtime={RUNTIME_MODE}, nous -> {UPSTREAM_BASE} or {NOUS_DIRECT_BASE}, "
+        f"openrouter -> {OPENROUTER_BASE})",
         flush=True,
     )
     server.serve_forever()

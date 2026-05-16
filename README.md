@@ -14,6 +14,8 @@ installations at runtime.
 - Adds a desktop launcher named `Cloud-Codex.lnk`.
 - Starts a local-only Responses bridge on `127.0.0.1:8655`.
 - Starts Hermes' Nous OAuth proxy on `127.0.0.1:8645` when needed.
+- Routes Codex turns through `hermes chat` by default so Hermes sessions,
+  memory, skills, and learning are in the turn path.
 - Refreshes a live provider/model/price catalog from Nous and OpenRouter.
 - Shows provider-qualified model routes, for example:
   - `Nous Portal via Hermes OAuth | deepseek/deepseek-v4-flash`
@@ -21,17 +23,20 @@ installations at runtime.
 - Supports Hermes OAuth login for free Nous models.
 - Supports optional direct provider API keys stored only in the installed local profile.
 
-## What This Baseline Does Not Do Yet
+## Architecture
 
-This first packaged checkpoint uses Hermes for OAuth/proxy auth and model catalog
-discovery. It does not yet route Codex turns through the full Hermes agent
-runtime, memory, learning, skill, or session architecture.
-
-The intended next architecture is:
+The first packaged checkpoint used Hermes as an OAuth/model proxy. This source
+now routes Codex turns through Hermes Agent:
 
 ```text
-Codex-like app UX -> Hermes Agent runtime -> Hermes memory/skills/learning -> cloud model providers
+Codex Desktop -> local Responses bridge -> hermes chat -> Hermes Agent runtime -> cloud providers
 ```
+
+The bridge stores the Hermes session id for each Codex response id and resumes
+the Hermes session when Codex sends `previous_response_id`.
+
+Set `CODEX_CLOUD_RUNTIME_MODE=proxy` before starting the bridge to force the
+older raw model-proxy behavior for debugging.
 
 ## Requirements
 
