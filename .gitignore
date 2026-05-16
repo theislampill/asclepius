@@ -1,0 +1,26 @@
+# Runtime profiles and generated state
+codex-home/
+electron-user-data/
+logs/
+dist/
+__pycache__/
+*.pyc
+
+# Local credentials and auth material
+cloud-secrets.json
+.env
+.env.*
+auth.json
+*.token
+*.key
+
+# Live/generated model catalogs
+cloud-models.json
+nous-models.json
+codex-model-catalog.json
+
+# Local OS/editor noise
+Thumbs.db
+.DS_Store
+*.lnk
+*.log
