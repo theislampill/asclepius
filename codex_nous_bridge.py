@@ -9,6 +9,7 @@ by default. A raw provider proxy mode is still available for diagnostics.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shlex
@@ -51,8 +52,23 @@ HERMES_WORKDIR = os.environ.get("CODEX_HERMES_WORKDIR", windows_path_to_wsl(WIND
 HERMES_TIMEOUT_SECONDS = int(os.environ.get("CODEX_HERMES_TIMEOUT_SECONDS", "600"))
 HERMES_HEARTBEAT_SECONDS = int(os.environ.get("CODEX_HERMES_HEARTBEAT_SECONDS", "15"))
 HERMES_MAX_TURNS = int(os.environ.get("CODEX_HERMES_MAX_TURNS", "45"))
+HERMES_PROGRESS_WORDS = os.environ.get("CODEX_HERMES_PROGRESS_WORDS", "1").strip().lower() not in {"0", "false", "no"}
 
 RESPONSES: dict[str, dict[str, Any]] = {}
+
+
+def file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+try:
+    BRIDGE_SCRIPT_SHA256 = file_sha256(__file__)
+except Exception:
+    BRIDGE_SCRIPT_SHA256 = ""
 
 
 class BridgeError(Exception):
@@ -321,15 +337,52 @@ def request_shape_summary(body: dict[str, Any]) -> str:
     return "; ".join(bits)
 
 
+def selected_model_metadata(route: dict[str, str]) -> dict[str, Any]:
+    try:
+        with open(CATALOG_PATH, "r", encoding="utf-8") as handle:
+            catalog = json.load(handle)
+    except Exception:
+        return {}
+    models = catalog.get("models") if isinstance(catalog, dict) else None
+    if not isinstance(models, list):
+        return {}
+    wanted = {route["requested_model"], route["requested_model"].replace(":", "/")}
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        if str(model.get("slug") or "") in wanted:
+            return model
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        if str(model.get("provider") or "") == route["provider"] and str(model.get("model_id") or "") == route["upstream_model"]:
+            return model
+    return {}
+
+
+def context_window_text(value: Any) -> str:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return "unknown"
+    return f"{number:,} tokens"
+
+
 def runtime_capsule(body: dict[str, Any], route: dict[str, str]) -> str:
     profile = codex_profile_config()
     sandbox = profile.get("sandbox_mode", "unknown")
     approval = profile.get("approval_policy", "unknown")
     effort = profile.get("model_reasoning_effort", "unknown")
     wsl_workspace = windows_path_to_wsl(WINDOWS_WORKSPACE)
+    metadata = selected_model_metadata(route)
+    context_window = context_window_text(metadata.get("context_length"))
+    billing = metadata.get("billing_label") or metadata.get("billing") or "unknown"
+    price = metadata.get("price_text") or "unknown price"
     return f"""Asclepius runtime capsule:
 - You are running under Cloud-Codex/Asclepius, an isolated Codex Desktop profile backed by Hermes Agent.
+- Do not identify as plain Codex only. If asked, say this is Codex Desktop as the frontend, Asclepius as the supervisor/profile, and Hermes Agent as the runtime.
 - Active cloud route: provider={route["provider"]}; requested_model={route["requested_model"]}; upstream_model={route["upstream_model"]}.
+- Selected model catalog metadata: context_window={context_window}; billing={billing}; price={price}.
 - Codex profile policy from config.toml: sandbox_mode={sandbox}; approval_policy={approval}; model_reasoning_effort={effort}.
 - Important boundary: the visible Codex Desktop sandbox dropdown does not enforce Hermes tool execution. Hermes tools run inside the Hermes/WSL runtime. Treat the Codex policy above as binding.
 - Host workspace: {WINDOWS_WORKSPACE}
@@ -340,6 +393,7 @@ def runtime_capsule(body: dict[str, Any], route: dict[str, str]) -> str:
 - Keep file reads bounded. Prefer listing/searching first, then read small ranges. Avoid repeatedly reading large generated files.
 - If you need to alter files, keep edits inside the workspace unless the user explicitly asks otherwise.
 - Each Codex chat should map to its own Hermes session through previous_response_id. Do not assume one global conversation.
+- For compaction/resume turns, preserve task state, decisions, file paths, tool results, and Hermes session continuity. Keep summaries dense enough to survive the selected model context window.
 - Bridge request shape: {request_shape_summary(body)}
 """
 
@@ -556,6 +610,12 @@ def sse_payload(event: str, data: dict[str, Any], seq: int) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n".encode("utf-8")
 
 
+def text_chunks(text: str, width: int = 80) -> list[str]:
+    if not text:
+        return []
+    return re.findall(rf".{{1,{width}}}(?:\s+|$)", text, flags=re.DOTALL) or [text]
+
+
 class BridgeHandler(BaseHTTPRequestHandler):
     server_version = "CodexNousBridge/0.1"
 
@@ -572,6 +632,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "openrouter_upstream": OPENROUTER_BASE,
                 "default_model": DEFAULT_MODEL,
                 "runtime_mode": RUNTIME_MODE,
+                "bridge_script_sha256": BRIDGE_SCRIPT_SHA256,
                 "hermes_bin": HERMES_BIN,
                 "hermes_wsl_distro": HERMES_WSL_DISTRO,
                 "hermes_workdir": HERMES_WORKDIR,
@@ -720,6 +781,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         rid = response_id()
         model = route["requested_model"]
         created = now()
+        started_at = time.monotonic()
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -731,10 +793,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.wfile.write(sse_payload(event, data, seq))
             self.wfile.flush()
             seq += 1
-
-        def emit_comment(text: str) -> None:
-            self.wfile.write(f": {text}\n\n".encode("utf-8"))
-            self.wfile.flush()
 
         def envelope(status: str, output: list[dict[str, Any]] | None = None) -> dict[str, Any]:
             return {
@@ -752,10 +810,54 @@ class BridgeHandler(BaseHTTPRequestHandler):
             }
 
         emit("response.created", {"type": "response.created", "response": envelope("in_progress")})
-        msg_id = item_id("msg")
+        reasoning_id = item_id("rs")
         emit("response.output_item.added", {
             "type": "response.output_item.added",
             "output_index": 0,
+            "item": {
+                "id": reasoning_id,
+                "type": "reasoning",
+                "status": "in_progress",
+                "summary": [],
+            },
+        })
+        emit("response.reasoning_summary_part.added", {
+            "type": "response.reasoning_summary_part.added",
+            "item_id": reasoning_id,
+            "output_index": 0,
+            "summary_index": 0,
+            "part": {"type": "summary_text", "text": ""},
+        })
+
+        reasoning_text: list[str] = []
+
+        def emit_progress(text: str) -> None:
+            if not HERMES_PROGRESS_WORDS:
+                emit("response.in_progress", {"type": "response.in_progress", "response": envelope("in_progress")})
+                return
+            elapsed = int(time.monotonic() - started_at)
+            line = f"Asclepius/Hermes: {text} ({elapsed}s elapsed)\n"
+            reasoning_text.append(line)
+            emit("response.reasoning_summary_text.delta", {
+                "type": "response.reasoning_summary_text.delta",
+                "item_id": reasoning_id,
+                "output_index": 0,
+                "summary_index": 0,
+                "delta": line,
+            })
+            emit("response.in_progress", {"type": "response.in_progress", "response": envelope("in_progress")})
+
+        metadata = selected_model_metadata(route)
+        context_label = context_window_text(metadata.get("context_length"))
+        emit_progress(
+            f"started Hermes Agent route {route['requested_model']} via {route['provider']}; "
+            f"context window {context_label}"
+        )
+
+        msg_id = item_id("msg")
+        emit("response.output_item.added", {
+            "type": "response.output_item.added",
+            "output_index": 1,
             "item": {
                 "id": msg_id,
                 "type": "message",
@@ -766,7 +868,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
         })
 
         try:
-            text, hermes_session_id = run_hermes_turn(route, body, heartbeat=lambda: emit_comment("asclepius: hermes agent still running"))
+            def heartbeat() -> None:
+                emit_progress(f"still running; max-turn budget {HERMES_MAX_TURNS}")
+
+            text, hermes_session_id = run_hermes_turn(route, body, heartbeat=heartbeat)
         except BridgeError as exc:
             failed = envelope("failed")
             failed["error"] = {"message": str(exc), "type": exc.typ}
@@ -778,14 +883,42 @@ class BridgeHandler(BaseHTTPRequestHandler):
             emit("response.failed", {"type": "response.failed", "response": failed})
             return
 
+        emit_progress("Hermes Agent finished; streaming final answer into Codex")
+        reasoning_done = "".join(reasoning_text)
+        emit("response.reasoning_summary_text.done", {
+            "type": "response.reasoning_summary_text.done",
+            "item_id": reasoning_id,
+            "output_index": 0,
+            "summary_index": 0,
+            "text": reasoning_done,
+        })
+        emit("response.reasoning_summary_part.done", {
+            "type": "response.reasoning_summary_part.done",
+            "item_id": reasoning_id,
+            "output_index": 0,
+            "summary_index": 0,
+            "part": {"type": "summary_text", "text": reasoning_done},
+        })
+        reasoning_item = {
+            "id": reasoning_id,
+            "type": "reasoning",
+            "status": "completed",
+            "summary": [{"type": "summary_text", "text": reasoning_done}],
+        }
+        emit("response.output_item.done", {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": reasoning_item,
+        })
+
         # Hermes CLI currently returns final text after its own agent loop. Emit
-        # the final answer as a small synthetic stream so Codex's app protocol
-        # still receives the event shape it expects.
-        for chunk in re.findall(r".{1,80}(?:\s+|$)", text, flags=re.DOTALL) or [text]:
+        # the final answer as a synthetic stream so Codex's app protocol still
+        # receives incremental output text events once Hermes returns control.
+        for chunk in text_chunks(text):
             emit("response.output_text.delta", {
                 "type": "response.output_text.delta",
                 "item_id": msg_id,
-                "output_index": 0,
+                "output_index": 1,
                 "content_index": 0,
                 "delta": chunk,
                 "logprobs": [],
@@ -794,7 +927,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         emit("response.output_text.done", {
             "type": "response.output_text.done",
             "item_id": msg_id,
-            "output_index": 0,
+            "output_index": 1,
             "content_index": 0,
             "text": text,
             "logprobs": [],
@@ -802,10 +935,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
         msg_item = build_message_item(text, msg_id=msg_id)
         emit("response.output_item.done", {
             "type": "response.output_item.done",
-            "output_index": 0,
+            "output_index": 1,
             "item": msg_item,
         })
-        completed = envelope("completed", [msg_item])
+        completed = envelope("completed", [reasoning_item, msg_item])
         completed["usage"] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         completed["metadata"]["hermes_session_id"] = hermes_session_id
         RESPONSES[rid] = {

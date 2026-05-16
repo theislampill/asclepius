@@ -406,6 +406,7 @@ $codexModels = foreach ($m in $models) {
     $entry.priority = $m.priority
     $entry.context_window = if ($m.context_length) { [int64]$m.context_length } else { 200000 }
     $entry.max_context_window = $entry.context_window
+    $entry.truncation_policy = [pscustomobject]@{ mode = "tokens"; limit = $entry.context_window }
     $entry.availability_nux = $null
     $entry.upgrade = $null
     $entry.additional_speed_tiers = @()
@@ -415,6 +416,14 @@ $codexModels = foreach ($m in $models) {
     }
     if ($entry.PSObject.Properties.Name -contains "instructions_variables") {
       $entry.instructions_variables = $null
+    }
+    if ($entry.PSObject.Properties.Name -contains "supports_reasoning_summaries") {
+      $entry.supports_reasoning_summaries = $true
+    } else {
+      $entry | Add-Member -NotePropertyName "supports_reasoning_summaries" -NotePropertyValue $true
+    }
+    if ($entry.PSObject.Properties.Name -contains "default_reasoning_summary") {
+      $entry.default_reasoning_summary = "auto"
     }
     $entry
   } else {
@@ -435,13 +444,13 @@ $codexModels = foreach ($m in $models) {
       context_window = if ($m.context_length) { [int64]$m.context_length } else { 200000 }
       max_context_window = if ($m.context_length) { [int64]$m.context_length } else { 200000 }
       base_instructions = ""
-      supports_reasoning_summaries = $false
-      default_reasoning_summary = "none"
+      supports_reasoning_summaries = $true
+      default_reasoning_summary = "auto"
       support_verbosity = $false
       default_verbosity = "low"
       apply_patch_tool_type = "freeform"
       web_search_tool_type = "text_and_image"
-      truncation_policy = [pscustomobject]@{ mode = "tokens"; limit = 10000 }
+      truncation_policy = [pscustomobject]@{ mode = "tokens"; limit = if ($m.context_length) { [int64]$m.context_length } else { 200000 } }
       supports_parallel_tool_calls = $true
       supports_image_detail_original = $false
       experimental_supported_tools = @()

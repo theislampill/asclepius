@@ -67,7 +67,16 @@ if (-not (Test-JsonEndpoint "http://127.0.0.1:$ProxyPort/health")) {
 $bridgeHealth = Get-JsonEndpoint "http://127.0.0.1:$BridgePort/health"
 $bridgeReady = $false
 if ($bridgeHealth) {
-  $bridgeReady = ([string]$bridgeHealth.windows_workspace -eq [string]$Workspace)
+  $bridge = Join-Path $Root "codex_nous_bridge.py"
+  $expectedBridgeHash = ""
+  try {
+    $expectedBridgeHash = (Get-FileHash -LiteralPath $bridge -Algorithm SHA256).Hash.ToLowerInvariant()
+  } catch {}
+  $runningBridgeHash = if ($bridgeHealth.bridge_script_sha256) { ([string]$bridgeHealth.bridge_script_sha256).ToLowerInvariant() } else { "" }
+  $bridgeReady = (
+    ([string]$bridgeHealth.windows_workspace -eq [string]$Workspace) -and
+    (-not $expectedBridgeHash -or $runningBridgeHash -eq $expectedBridgeHash)
+  )
   if (-not $bridgeReady) {
     Stop-BridgeProcesses
     Start-Sleep -Milliseconds 500
