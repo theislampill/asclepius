@@ -3,6 +3,9 @@
 Cloud-Codex is an isolated Codex Desktop launcher profile for cloud model routing.
 Asclepius is the Windows supervisor app that owns the user-facing control
 surface while keeping Codex Desktop and Hermes independently updateable.
+Its normal ready state and first-run wizard both use the same Codex-like app
+shell: sidebar navigation, a central conversation surface, and a bottom
+composer with model/provider controls.
 
 This redistributable baseline does not include Codex, Hermes, credentials, logs,
 generated model catalogs, or Electron profile state. It installs only local
@@ -15,6 +18,8 @@ installations at runtime.
 - Creates an isolated Codex home under `%USERPROFILE%\.codex-nous-cloud`.
 - Builds a local `Asclepius.exe` supervisor app and adds a desktop launcher
   named `asclepius.lnk`.
+- Presents first-run setup and normal launch inside one shared Codex-style UI
+  instead of switching between wizard and utility-window layouts.
 - Starts a local-only Responses bridge on `127.0.0.1:8655`.
 - Starts Hermes' Nous OAuth proxy on `127.0.0.1:8645` when needed.
 - Routes Codex turns through `hermes chat` by default so Hermes sessions,
@@ -78,8 +83,9 @@ belongs to Codex. This package does not modify or repackage Codex Desktop.
   keyboard-operable buttons, accessible names on major controls, and smoke
   assertions for contrast and basic operability metadata.
 - **PE:** First-run content works before services or catalogs are ready: the
-  app shows dependency status, install actions, and a safe fallback Nous route,
-  then progressively enables richer launch/model behavior as checks pass.
+  shared Codex-style shell shows dependency status, install actions, and a safe
+  fallback Nous route, then progressively enables richer launch/model behavior
+  as checks pass.
 
 Set `CODEX_CLOUD_RUNTIME_MODE=proxy` before starting the bridge to force the
 older raw model-proxy behavior for debugging.

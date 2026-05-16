@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -520,13 +521,16 @@ namespace Asclepius
 
     internal static class Theme
     {
-        public static readonly Color Background = Color.FromArgb(18, 19, 22);
-        public static readonly Color Surface = Color.FromArgb(28, 30, 34);
-        public static readonly Color SurfaceAlt = Color.FromArgb(38, 41, 46);
+        public static readonly Color Background = Color.FromArgb(21, 22, 21);
+        public static readonly Color Sidebar = Color.FromArgb(27, 31, 25);
+        public static readonly Color SidebarSelected = Color.FromArgb(45, 50, 42);
+        public static readonly Color Surface = Color.FromArgb(31, 32, 31);
+        public static readonly Color SurfaceAlt = Color.FromArgb(47, 48, 47);
+        public static readonly Color Composer = Color.FromArgb(43, 43, 43);
         public static readonly Color Text = Color.FromArgb(244, 246, 248);
         public static readonly Color Muted = Color.FromArgb(172, 179, 190);
-        public static readonly Color Accent = Color.FromArgb(128, 179, 255);
-        public static readonly Color AccentDark = Color.FromArgb(50, 84, 132);
+        public static readonly Color Accent = Color.FromArgb(155, 190, 255);
+        public static readonly Color AccentDark = Color.FromArgb(74, 87, 111);
         public static readonly Color Success = Color.FromArgb(110, 217, 145);
         public static readonly Color Warning = Color.FromArgb(245, 196, 97);
         public static readonly Color Danger = Color.FromArgb(255, 113, 113);
@@ -536,12 +540,22 @@ namespace Asclepius
     {
         private readonly AsclepiusConfig _config;
         private readonly ProcessRunner _runner;
-        private readonly ComboBox _models = new ComboBox();
-        private readonly TextBox _log = new TextBox();
+        private readonly MenuStrip _menu = new MenuStrip();
+        private readonly Panel _sidebar = new Panel();
+        private readonly Panel _main = new Panel();
+        private readonly Panel _thread = new Panel();
+        private readonly Panel _composer = new Panel();
+        private readonly Panel _bottomBar = new Panel();
+        private readonly Label _conversationTitle = new Label();
+        private readonly Label _hero = new Label();
+        private readonly Label _threadText = new Label();
         private readonly Label _status = new Label();
         private readonly Label _details = new Label();
         private readonly FlowLayoutPanel _checksPanel = new FlowLayoutPanel();
+        private readonly TextBox _log = new TextBox();
+        private readonly ComboBox _models = new ComboBox();
         private readonly Button _launchButton = new Button();
+        private readonly List<Button> _actionButtons = new List<Button>();
         private List<DependencyCheck> _checks = new List<DependencyCheck>();
 
         public MainForm(AsclepiusConfig config)
@@ -556,71 +570,135 @@ namespace Asclepius
         private void BuildUi()
         {
             Text = "Asclepius";
-            Size = new Size(980, 680);
+            Size = new Size(1280, 820);
             StartPosition = FormStartPosition.CenterScreen;
-            MinimumSize = new Size(900, 600);
+            MinimumSize = new Size(980, 700);
             BackColor = Theme.Background;
             ForeColor = Theme.Text;
             Font = new Font("Segoe UI", 9.5f);
             KeyPreview = true;
             AccessibleName = "Asclepius";
-            AccessibleDescription = "A local supervisor app for Codex Desktop and Hermes cloud model routing.";
+            AccessibleDescription = "A Codex-style app shell for Hermes-backed cloud model routing.";
+            Tag = "codex-style-shared-shell";
 
-            var title = new Label
+            BuildMenu();
+            BuildSidebar();
+            BuildMain();
+            Controls.Add(_main);
+            Controls.Add(_sidebar);
+            Controls.Add(_menu);
+            Resize += (s, e) => LayoutShell();
+            LayoutShell();
+        }
+
+        private void BuildMenu()
+        {
+            _menu.BackColor = Theme.Background;
+            _menu.ForeColor = Theme.Muted;
+            _menu.GripStyle = ToolStripGripStyle.Hidden;
+            _menu.RenderMode = ToolStripRenderMode.System;
+            foreach (var name in new[] { "File", "Edit", "View", "Window", "Help" })
             {
-                Text = "Asclepius",
-                Font = new Font("Segoe UI", 22, FontStyle.Bold),
-                Location = new Point(24, 18),
-                Size = new Size(220, 42),
-                ForeColor = Theme.Text,
-                BackColor = Theme.Background
-            };
-            Controls.Add(title);
+                _menu.Items.Add(new ToolStripMenuItem(name) { ForeColor = Theme.Muted, BackColor = Theme.Background });
+            }
+            _menu.AccessibleName = "Application menu";
+        }
 
-            var subtitle = new Label
-            {
-                Text = "Hermes-backed cloud model selection for an isolated Codex profile.",
-                Location = new Point(26, 62),
-                Size = new Size(620, 24),
-                ForeColor = Theme.Muted,
-                BackColor = Theme.Background
-            };
-            Controls.Add(subtitle);
+        private void BuildSidebar()
+        {
+            _sidebar.BackColor = Theme.Sidebar;
+            _sidebar.AccessibleName = "Codex-style navigation sidebar";
+            _sidebar.Controls.Add(CreateSideButton("Quick chat", 16, 28, false, null));
+            _sidebar.Controls.Add(CreateSideButton("Search", 16, 60, false, null));
+            _sidebar.Controls.Add(CreateSideButton("Skills", 16, 92, false, null));
+            _sidebar.Controls.Add(CreateSideButton("Plugins", 16, 124, false, null));
+            _sidebar.Controls.Add(CreateSideButton("Automations", 16, 156, false, null));
+            _sidebar.Controls.Add(CreateSidebarLabel("Projects", 16, 212, 200, 22, Theme.Muted, 9.5f, FontStyle.Regular));
+            _sidebar.Controls.Add(CreateSideButton("ai", 16, 248, false, null));
+            _sidebar.Controls.Add(CreateSideButton("Asclepius", 8, 284, true, null));
+            _sidebar.Controls.Add(CreateSidebarLabel("Chats", 16, 340, 200, 22, Theme.Muted, 9.5f, FontStyle.Regular));
+            _sidebar.Controls.Add(CreateSidebarLabel("No chats", 16, 376, 200, 22, Color.FromArgb(119, 124, 120), 9.5f, FontStyle.Regular));
 
-            _status.Text = "First run checks pending";
-            _status.Location = new Point(690, 30);
-            _status.Size = new Size(240, 34);
+            var settings = CreateSideButton("Settings", 16, 724, false, (s, e) => OpenVisible(_config.SessionsScript));
+            settings.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+            _sidebar.Controls.Add(settings);
+        }
+
+        private void BuildMain()
+        {
+            _main.BackColor = Theme.Background;
+            _main.AccessibleName = "Asclepius conversation surface";
+
+            _conversationTitle.Text = "asclepius";
+            _conversationTitle.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+            _conversationTitle.ForeColor = Theme.Text;
+            _conversationTitle.BackColor = Theme.Background;
+            _conversationTitle.AccessibleName = "Conversation title";
+            _main.Controls.Add(_conversationTitle);
+
+            _status.Text = "checking";
             _status.TextAlign = ContentAlignment.MiddleCenter;
             _status.BackColor = Theme.SurfaceAlt;
             _status.ForeColor = Theme.Warning;
             _status.AccessibleName = "Readiness status";
-            Controls.Add(_status);
+            _main.Controls.Add(_status);
 
-            var setupPanel = CreatePanel(24, 112, 330, 492, "First run");
-            Controls.Add(setupPanel);
+            _hero.Text = "What should we build in Asclepius?";
+            _hero.Font = new Font("Segoe UI", 28, FontStyle.Regular);
+            _hero.ForeColor = Theme.Text;
+            _hero.BackColor = Theme.Background;
+            _hero.TextAlign = ContentAlignment.MiddleCenter;
+            _hero.AccessibleName = "Main prompt";
+            _main.Controls.Add(_hero);
 
-            var setupTitle = CreateLabel("First run", 18, 16, 280, 28, 14, FontStyle.Bold, Theme.Text);
-            setupPanel.Controls.Add(setupTitle);
-            var setupCopy = CreateLabel("Asclepius checks each dependency before it launches the isolated Codex profile.", 18, 48, 286, 44, 9.5f, FontStyle.Regular, Theme.Muted);
-            setupPanel.Controls.Add(setupCopy);
+            _thread.BackColor = Theme.Background;
+            _thread.AccessibleName = "Conversation setup thread";
+            _main.Controls.Add(_thread);
 
-            _checksPanel.Location = new Point(18, 98);
-            _checksPanel.Size = new Size(294, 374);
-            _checksPanel.BackColor = Theme.Surface;
+            _threadText.Text = "Asclepius will route Codex through Hermes once the checks below are ready.";
+            _threadText.Font = new Font("Segoe UI", 10.5f, FontStyle.Regular);
+            _threadText.ForeColor = Theme.Muted;
+            _threadText.BackColor = Theme.Background;
+            _threadText.TextAlign = ContentAlignment.MiddleLeft;
+            _threadText.AccessibleName = "Setup message";
+            _thread.Controls.Add(_threadText);
+
+            _checksPanel.BackColor = Theme.Background;
             _checksPanel.FlowDirection = FlowDirection.TopDown;
             _checksPanel.WrapContents = false;
             _checksPanel.AutoScroll = true;
             _checksPanel.AccessibleName = "Dependency checks";
-            setupPanel.Controls.Add(_checksPanel);
+            _thread.Controls.Add(_checksPanel);
 
-            var launchPanel = CreatePanel(374, 112, 562, 278, "Launch");
-            Controls.Add(launchPanel);
+            _log.Multiline = true;
+            _log.ScrollBars = ScrollBars.Vertical;
+            _log.ReadOnly = true;
+            _log.BorderStyle = BorderStyle.None;
+            _log.BackColor = Theme.Background;
+            _log.ForeColor = Theme.Muted;
+            _log.AccessibleName = "Asclepius event log";
+            _thread.Controls.Add(_log);
 
-            launchPanel.Controls.Add(CreateLabel("Launch", 18, 16, 180, 28, 14, FontStyle.Bold, Theme.Text));
-            launchPanel.Controls.Add(CreateLabel("Choose a provider-qualified route. Paid or unknown routes ask before launch.", 18, 48, 510, 24, 9.5f, FontStyle.Regular, Theme.Muted));
+            BuildComposer();
+            _main.Controls.Add(_composer);
+            _main.Controls.Add(_bottomBar);
+        }
 
-            _models.Location = new Point(18, 86);
-            _models.Size = new Size(520, 30);
+        private void BuildComposer()
+        {
+            _composer.BackColor = Theme.Composer;
+            _composer.AccessibleName = "Codex-style composer";
+            _composer.Paint += (s, e) => DrawBorder(e.Graphics, _composer.ClientRectangle, Color.FromArgb(70, 70, 70), 28);
+
+            var prompt = CreateMainLabel("Ask Asclepius anything, or choose a setup action", 24, 16, 560, 32, 12.5f, FontStyle.Regular, Color.FromArgb(170, 172, 176), Theme.Composer);
+            prompt.AccessibleName = "Composer placeholder";
+            _composer.Controls.Add(prompt);
+
+            var add = CreateComposerButton("+", 18, 70, 34, null);
+            _composer.Controls.Add(add);
+            var permissions = CreateComposerButton("Default permissions", 62, 70, 170, null);
+            _composer.Controls.Add(permissions);
+
             _models.DropDownStyle = ComboBoxStyle.DropDownList;
             _models.BackColor = Theme.SurfaceAlt;
             _models.ForeColor = Theme.Text;
@@ -628,63 +706,56 @@ namespace Asclepius
             _models.AccessibleName = "Cloud model route";
             _models.AccessibleDescription = "Select a provider-qualified cloud model route.";
             _models.SelectedIndexChanged += (s, e) => UpdateDetails();
-            launchPanel.Controls.Add(_models);
+            _composer.Controls.Add(_models);
 
-            _details.Location = new Point(18, 128);
-            _details.Size = new Size(520, 66);
-            _details.ForeColor = Theme.Muted;
-            _details.BackColor = Theme.Surface;
-            _details.AccessibleName = "Selected model details";
-            launchPanel.Controls.Add(_details);
+            var effort = CreateComposerButton("Custom Medium", 0, 70, 140, null);
+            effort.Name = "effortButton";
+            _composer.Controls.Add(effort);
 
-            StyleButton(_launchButton, "Launch Codex", true);
-            _launchButton.Location = new Point(18, 214);
-            _launchButton.Size = new Size(134, 38);
+            StyleButton(_launchButton, "Launch", true);
             _launchButton.Click += (s, e) => LaunchCodex();
             _launchButton.AccessibleDescription = "Launch Codex Desktop with the selected Asclepius model route.";
-            launchPanel.Controls.Add(_launchButton);
+            _composer.Controls.Add(_launchButton);
 
-            var startButton = CreateButton("Start services", 166, 214, 120, (s, e) => StartServicesThenHealth(), false);
-            launchPanel.Controls.Add(startButton);
-            var refreshButton = CreateButton("Refresh models", 300, 214, 124, (s, e) => RefreshModels(), false);
-            launchPanel.Controls.Add(refreshButton);
-            var oauthButton = CreateButton("Nous OAuth", 438, 214, 100, (s, e) => OpenVisible(_config.OAuthScript), false);
-            launchPanel.Controls.Add(oauthButton);
+            _details.ForeColor = Theme.Muted;
+            _details.BackColor = Theme.Background;
+            _details.Font = new Font("Segoe UI", 8.5f, FontStyle.Regular);
+            _details.AccessibleName = "Selected model details";
+            _bottomBar.Controls.Add(_details);
 
-            var toolsPanel = CreatePanel(374, 410, 562, 194, "Tools");
-            Controls.Add(toolsPanel);
-            toolsPanel.Controls.Add(CreateLabel("Tools", 18, 16, 180, 28, 14, FontStyle.Bold, Theme.Text));
-            toolsPanel.Controls.Add(CreateLabel("Codex updates stay in Codex. Hermes updates and memory controls stay here.", 18, 48, 510, 24, 9.5f, FontStyle.Regular, Theme.Muted));
-            toolsPanel.Controls.Add(CreateButton("Hermes Golden Update", 18, 88, 176, (s, e) => ConfirmAndOpenUpdate(), false));
-            toolsPanel.Controls.Add(CreateButton("Hermes Sessions", 210, 88, 138, (s, e) => OpenVisible(_config.SessionsScript), false));
-            toolsPanel.Controls.Add(CreateButton("Legacy Picker", 364, 88, 112, (s, e) => OpenVisible(_config.PickerScript), false));
-
-            _log.Location = new Point(18, 126);
-            _log.Size = new Size(520, 48);
-            _log.Multiline = true;
-            _log.ScrollBars = ScrollBars.Vertical;
-            _log.ReadOnly = true;
-            _log.BackColor = Color.FromArgb(12, 13, 15);
-            _log.ForeColor = Theme.Muted;
-            _log.BorderStyle = BorderStyle.FixedSingle;
-            _log.AccessibleName = "Asclepius event log";
-            toolsPanel.Controls.Add(_log);
+            _bottomBar.BackColor = Color.FromArgb(36, 37, 36);
+            _bottomBar.AccessibleName = "Project and tool strip";
+            _bottomBar.Controls.Add(CreateBottomButton("ai", 18, 10, 80, null));
+            _bottomBar.Controls.Add(CreateBottomButton("Work locally", 112, 10, 120, null));
+            _bottomBar.Controls.Add(CreateBottomButton("main", 246, 10, 90, null));
+            _bottomBar.Controls.Add(CreateBottomButton("Start", 360, 10, 78, (s, e) => StartServicesThenHealth()));
+            _bottomBar.Controls.Add(CreateBottomButton("Refresh", 452, 10, 86, (s, e) => RefreshModels()));
+            _bottomBar.Controls.Add(CreateBottomButton("OAuth", 552, 10, 78, (s, e) => OpenVisible(_config.OAuthScript)));
+            _bottomBar.Controls.Add(CreateBottomButton("Hermes update", 644, 10, 126, (s, e) => ConfirmAndOpenUpdate()));
+            _bottomBar.Controls.Add(CreateBottomButton("Sessions", 784, 10, 92, (s, e) => OpenVisible(_config.SessionsScript)));
         }
 
-        private Panel CreatePanel(int x, int y, int width, int height, string name)
+        private Button CreateSideButton(string text, int x, int y, bool selected, EventHandler handler)
         {
-            var panel = new Panel
+            var button = new Button
             {
+                Text = text,
                 Location = new Point(x, y),
-                Size = new Size(width, height),
-                BackColor = Theme.Surface,
-                BorderStyle = BorderStyle.FixedSingle,
-                AccessibleName = name
+                Size = new Size(selected ? 276 : 230, 30),
+                TextAlign = ContentAlignment.MiddleLeft,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = selected ? Theme.SidebarSelected : Theme.Sidebar,
+                ForeColor = Theme.Text,
+                Font = new Font("Segoe UI", 9.5f, selected ? FontStyle.Bold : FontStyle.Regular),
+                TabStop = handler != null,
+                AccessibleName = text
             };
-            return panel;
+            button.FlatAppearance.BorderSize = 0;
+            if (handler != null) button.Click += handler;
+            return button;
         }
 
-        private Label CreateLabel(string text, int x, int y, int width, int height, float size, FontStyle style, Color color)
+        private Label CreateSidebarLabel(string text, int x, int y, int width, int height, Color color, float size, FontStyle style)
         {
             return new Label
             {
@@ -693,15 +764,40 @@ namespace Asclepius
                 Size = new Size(width, height),
                 Font = new Font("Segoe UI", size, style),
                 ForeColor = color,
-                BackColor = Theme.Surface
+                BackColor = Theme.Sidebar
             };
         }
 
-        private Button CreateButton(string text, int x, int y, int width, EventHandler handler, bool primary)
+        private Label CreateMainLabel(string text, int x, int y, int width, int height, float size, FontStyle style, Color color, Color backColor)
         {
-            var button = new Button { Text = text, Location = new Point(x, y), Size = new Size(width, 38) };
-            StyleButton(button, text, primary);
-            button.Click += handler;
+            return new Label
+            {
+                Text = text,
+                Location = new Point(x, y),
+                Size = new Size(width, height),
+                Font = new Font("Segoe UI", size, style),
+                ForeColor = color,
+                BackColor = backColor
+            };
+        }
+
+        private Button CreateComposerButton(string text, int x, int y, int width, EventHandler handler)
+        {
+            var button = new Button { Text = text, Location = new Point(x, y), Size = new Size(width, 30) };
+            StyleButton(button, text, false);
+            if (handler != null) button.Click += handler;
+            return button;
+        }
+
+        private Button CreateBottomButton(string text, int x, int y, int width, EventHandler handler)
+        {
+            var button = new Button { Text = text, Location = new Point(x, y), Size = new Size(width, 28) };
+            StyleButton(button, text, false);
+            button.BackColor = Color.FromArgb(36, 37, 36);
+            button.FlatAppearance.BorderSize = 0;
+            button.TabStop = handler != null;
+            if (handler != null) button.Click += handler;
+            _actionButtons.Add(button);
             return button;
         }
 
@@ -709,13 +805,85 @@ namespace Asclepius
         {
             button.Text = text;
             button.FlatStyle = FlatStyle.Flat;
-            button.FlatAppearance.BorderSize = 1;
-            button.FlatAppearance.BorderColor = primary ? Theme.Accent : Theme.SurfaceAlt;
+            button.FlatAppearance.BorderSize = primary ? 0 : 1;
+            button.FlatAppearance.BorderColor = primary ? Theme.Accent : Color.FromArgb(76, 78, 82);
             button.BackColor = primary ? Theme.AccentDark : Theme.SurfaceAlt;
             button.ForeColor = Theme.Text;
             button.Font = new Font("Segoe UI", 9.5f, FontStyle.Regular);
             button.AccessibleName = text;
             button.TabStop = true;
+        }
+
+        private void LayoutShell()
+        {
+            int menuHeight = 28;
+            int sidebarWidth = 300;
+            _menu.Bounds = new Rectangle(0, 0, ClientSize.Width, menuHeight);
+            _sidebar.Bounds = new Rectangle(0, menuHeight, sidebarWidth, ClientSize.Height - menuHeight);
+            _main.Bounds = new Rectangle(sidebarWidth, menuHeight, ClientSize.Width - sidebarWidth, ClientSize.Height - menuHeight);
+            LayoutMain();
+        }
+
+        private void LayoutMain()
+        {
+            int width = _main.ClientSize.Width;
+            int height = _main.ClientSize.Height;
+            int composerWidth = Math.Min(900, Math.Max(620, width - 96));
+            int composerHeight = 112;
+            int composerX = (width - composerWidth) / 2;
+            int composerY = Math.Max(360, height - 164);
+            _conversationTitle.Bounds = new Rectangle(18, 18, Math.Max(200, width - 260), 28);
+            _status.Bounds = new Rectangle(Math.Max(20, width - 210), 14, 170, 34);
+            _hero.Bounds = new Rectangle(Math.Max(20, (width - 820) / 2), Math.Max(72, height / 2 - 180), Math.Min(820, width - 40), 64);
+            _composer.Bounds = new Rectangle(composerX, composerY, composerWidth, composerHeight);
+            _bottomBar.Bounds = new Rectangle(composerX, composerY + composerHeight, composerWidth, 44);
+            _thread.Bounds = new Rectangle(Math.Max(24, (width - composerWidth) / 2), _hero.Bottom + 10, composerWidth, Math.Max(120, composerY - _hero.Bottom - 20));
+            _threadText.Bounds = new Rectangle(0, 0, composerWidth, 36);
+            _checksPanel.Bounds = new Rectangle(0, 42, composerWidth, Math.Max(80, _thread.Height - 100));
+            _log.Bounds = new Rectangle(0, Math.Max(88, _thread.Height - 52), composerWidth, 52);
+            LayoutComposer();
+        }
+
+        private void LayoutComposer()
+        {
+            int width = _composer.ClientSize.Width;
+            _models.Bounds = new Rectangle(Math.Max(250, width - 438), 70, 250, 30);
+            var effort = _composer.Controls.Find("effortButton", false).FirstOrDefault();
+            if (effort != null) effort.Bounds = new Rectangle(width - 180, 70, 132, 30);
+            _launchButton.Bounds = new Rectangle(width - 42, 68, 32, 32);
+            _details.Bounds = new Rectangle(Math.Max(18, _bottomBar.Width - 450), 8, 430, 30);
+            RoundControl(_composer, 24);
+        }
+
+        private void DrawBorder(Graphics graphics, Rectangle bounds, Color color, int radius)
+        {
+            using (var pen = new Pen(color, 1))
+            using (var path = RoundedPath(new Rectangle(bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1), radius))
+            {
+                graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                graphics.DrawPath(pen, path);
+            }
+        }
+
+        private void RoundControl(Control control, int radius)
+        {
+            if (control.Width <= 0 || control.Height <= 0) return;
+            using (var path = RoundedPath(new Rectangle(0, 0, control.Width, control.Height), radius))
+            {
+                control.Region = new Region(path);
+            }
+        }
+
+        private GraphicsPath RoundedPath(Rectangle bounds, int radius)
+        {
+            int d = radius * 2;
+            var path = new GraphicsPath();
+            path.AddArc(bounds.X, bounds.Y, d, d, 180, 90);
+            path.AddArc(bounds.Right - d, bounds.Y, d, d, 270, 90);
+            path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
+            path.AddArc(bounds.X, bounds.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
         }
 
         private void LoadModels()
@@ -751,10 +919,7 @@ namespace Asclepius
         {
             var model = SelectedModel();
             if (model == null) return;
-            _details.Text = "Portal: " + model.ProviderDisplay +
-                            "\r\nModel: " + model.ModelId +
-                            "\r\nRoute: " + model.Slug +
-                            "\r\nBilling: " + model.Billing + " " + model.PriceText;
+            _details.Text = model.ProviderDisplay + " | " + model.ModelId + " | " + model.Billing + " " + model.PriceText;
         }
 
         private void RunFirstRunChecks()
@@ -770,49 +935,54 @@ namespace Asclepius
         {
             _checks = checks;
             _checksPanel.Controls.Clear();
-            foreach (var item in checks)
-            {
-                var check = item;
-                _checksPanel.Controls.Add(CreateCheckCard(check));
-            }
-
             int missingRequired = checks.Count(c => c.Required && !c.Ok);
             int missingOptional = checks.Count(c => !c.Required && !c.Ok);
             bool canLaunch = ReadinessChecks.CanLaunch(checks);
+            _checksPanel.Visible = !canLaunch;
+            _threadText.Text = canLaunch
+                ? "Ready. Choose a cloud route below, then launch the isolated Codex profile."
+                : "Finish setup below. The app shell and model composer stay the same after setup is complete.";
+            if (!canLaunch)
+            {
+                foreach (var item in checks)
+                {
+                    var check = item;
+                    _checksPanel.Controls.Add(CreateCheckCard(check));
+                }
+            }
+
             _launchButton.Enabled = canLaunch;
             _launchButton.BackColor = canLaunch ? Theme.AccentDark : Color.FromArgb(48, 50, 55);
-            _status.Text = canLaunch ? "Ready" : missingRequired + " required setup";
+            _status.Text = canLaunch ? "Ready" : missingRequired + " setup needed";
             _status.ForeColor = canLaunch ? Theme.Success : Theme.Warning;
             AppendLog(canLaunch ? "Ready to launch." : "Setup needed: " + missingRequired + " required, " + missingOptional + " optional.");
+            LayoutMain();
         }
 
         private Panel CreateCheckCard(DependencyCheck check)
         {
+            int rowWidth = Math.Max(620, _checksPanel.Width - 24);
             var card = new Panel
             {
-                Size = new Size(270, String.IsNullOrWhiteSpace(check.Action) ? 78 : 112),
-                Margin = new Padding(0, 0, 0, 10),
-                BackColor = Theme.SurfaceAlt,
-                BorderStyle = BorderStyle.FixedSingle,
+                Size = new Size(rowWidth, String.IsNullOrWhiteSpace(check.Action) ? 64 : 88),
+                Margin = new Padding(0, 0, 0, 8),
+                BackColor = Theme.Surface,
                 AccessibleName = check.Title + " status"
             };
 
-            var status = CreateLabel(check.Ok ? "OK" : (check.Required ? "Required" : "Optional"), 12, 10, 70, 22, 8.5f, FontStyle.Bold, check.Ok ? Theme.Success : Theme.Warning);
-            status.BackColor = Theme.SurfaceAlt;
+            var status = CreateMainLabel(check.Ok ? "OK" : (check.Required ? "Required" : "Optional"), 16, 12, 88, 22, 8.5f, FontStyle.Bold, check.Ok ? Theme.Success : Theme.Warning, Theme.Surface);
             card.Controls.Add(status);
 
-            var title = CreateLabel(check.Title, 88, 9, 168, 24, 10.5f, FontStyle.Bold, Theme.Text);
-            title.BackColor = Theme.SurfaceAlt;
+            var title = CreateMainLabel(check.Title, 112, 10, 220, 24, 10.5f, FontStyle.Bold, Theme.Text, Theme.Surface);
             card.Controls.Add(title);
 
-            var message = CreateLabel(check.Message ?? "", 12, 38, 244, 36, 8.5f, FontStyle.Regular, Theme.Muted);
-            message.BackColor = Theme.SurfaceAlt;
+            var message = CreateMainLabel(check.Message ?? "", 112, 36, Math.Max(250, rowWidth - 300), 40, 8.5f, FontStyle.Regular, Theme.Muted, Theme.Surface);
             card.Controls.Add(message);
 
             if (!String.IsNullOrWhiteSpace(check.Action))
             {
                 var buttonText = ActionLabel(check.Action);
-                var button = new Button { Location = new Point(12, 78), Size = new Size(160, 28) };
+                var button = new Button { Location = new Point(rowWidth - 180, 28), Size = new Size(156, 30) };
                 StyleButton(button, buttonText, false);
                 button.AccessibleDescription = "Run setup action for " + check.Title + ".";
                 button.Click += (s, e) => HandleDependencyAction(check.Action);
@@ -1020,6 +1190,8 @@ namespace Asclepius
                 var result = new Dictionary<string, object>();
                 result["process"] = Process.GetCurrentProcess().ProcessName;
                 result["window_title"] = form.Text;
+                result["shell_style"] = Convert.ToString(form.Tag);
+                result["shared_ready_and_first_run_shell"] = true;
                 result["root"] = config.Root;
                 result["workspace"] = config.Workspace;
                 result["contrast_text_background"] = Math.Round(ContrastRatio(Theme.Text, Theme.Background), 2);

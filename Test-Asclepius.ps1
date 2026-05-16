@@ -66,14 +66,19 @@ function Test-InstalledApp {
   Assert-True ([bool]$smoke.scripts_present) "Installed smoke did not find required scripts."
   Assert-True ([bool]$smoke.config_present) "Installed smoke did not find isolated Codex config."
 
-  & $exe --window-smoke
-  if ($LASTEXITCODE -ne 0) {
-    throw "Installed Asclepius --window-smoke failed."
-  }
   $windowSmokePath = Join-Path $InstalledRoot "asclepius-window-smoke.json"
+  Remove-Item -LiteralPath $windowSmokePath -Force -ErrorAction SilentlyContinue
+  $windowProcess = Start-Process -FilePath $exe -ArgumentList "--window-smoke" -WorkingDirectory $InstalledRoot -PassThru
+  if (-not $windowProcess.WaitForExit(15000)) {
+    try { $windowProcess.Kill() } catch {}
+    throw "Installed Asclepius --window-smoke timed out."
+  }
+  Assert-True (Test-Path -LiteralPath $windowSmokePath) "Installed Asclepius --window-smoke did not write its smoke file."
   $windowSmoke = Get-Content -LiteralPath $windowSmokePath -Raw | ConvertFrom-Json
   Assert-True ($windowSmoke.process -eq "Asclepius") "Window smoke process was $($windowSmoke.process), not Asclepius."
   Assert-True ($windowSmoke.window_title -eq "Asclepius") "Window smoke title was $($windowSmoke.window_title), not Asclepius."
+  Assert-True ($windowSmoke.shell_style -eq "codex-style-shared-shell") "Window smoke did not report the shared Codex-style shell."
+  Assert-True ([bool]($windowSmoke.shared_ready_and_first_run_shell)) "Ready and first-run paths should use the same shell."
   Assert-True ([double]($windowSmoke.contrast_text_background) -ge 4.5) "Text/background contrast is below WCAG AA."
   Assert-True ([double]($windowSmoke.contrast_muted_surface) -ge 4.5) "Muted/surface contrast is below WCAG AA."
   Assert-True ([int]($windowSmoke.keyboard_controls) -ge 5) "Expected keyboard-operable controls in the app."
