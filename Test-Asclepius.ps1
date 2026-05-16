@@ -42,48 +42,22 @@ function Test-PythonBridge {
   Add-Check "python_bridge"
 }
 
-function Test-SourceBuild {
-  & (Join-Path $Root "Build-AsclepiusApp.ps1") | Out-Null
-  Assert-True (Test-Path -LiteralPath (Join-Path $Root "Asclepius.exe")) "Source Asclepius.exe was not built."
-  Add-Check "source_build"
-}
-
-function Test-InstalledApp {
+function Test-InstalledLauncher {
   if ($SkipInstalled) {
-    Add-Check "installed_app" "skipped"
+    Add-Check "installed_launcher" "skipped"
     return
   }
 
-  $exe = Join-Path $InstalledRoot "Asclepius.exe"
-  Assert-True (Test-Path -LiteralPath $exe) "Installed Asclepius.exe not found: $exe"
-
-  & $exe --smoke
+  $script = Join-Path $InstalledRoot "Launch-CloudCodexApp.ps1"
+  Assert-True (Test-Path -LiteralPath $script) "Installed real-Codex launcher not found: $script"
+  Assert-True (-not (Test-Path -LiteralPath (Join-Path $InstalledRoot "Asclepius.exe"))) "Installed root still contains legacy Asclepius.exe."
+  $dryRun = & $script -DryRun
   if ($LASTEXITCODE -ne 0) {
-    throw "Installed Asclepius --smoke failed."
+    throw "Real-Codex launcher dry-run failed."
   }
-  $smokePath = Join-Path $InstalledRoot "asclepius-smoke.json"
-  $smoke = Get-Content -LiteralPath $smokePath -Raw | ConvertFrom-Json
-  Assert-True ([bool]$smoke.scripts_present) "Installed smoke did not find required scripts."
-  Assert-True ([bool]$smoke.config_present) "Installed smoke did not find isolated Codex config."
-
-  $windowSmokePath = Join-Path $InstalledRoot "asclepius-window-smoke.json"
-  Remove-Item -LiteralPath $windowSmokePath -Force -ErrorAction SilentlyContinue
-  $windowProcess = Start-Process -FilePath $exe -ArgumentList "--window-smoke" -WorkingDirectory $InstalledRoot -PassThru
-  if (-not $windowProcess.WaitForExit(15000)) {
-    try { $windowProcess.Kill() } catch {}
-    throw "Installed Asclepius --window-smoke timed out."
-  }
-  Assert-True (Test-Path -LiteralPath $windowSmokePath) "Installed Asclepius --window-smoke did not write its smoke file."
-  $windowSmoke = Get-Content -LiteralPath $windowSmokePath -Raw | ConvertFrom-Json
-  Assert-True ($windowSmoke.process -eq "Asclepius") "Window smoke process was $($windowSmoke.process), not Asclepius."
-  Assert-True ($windowSmoke.window_title -eq "Asclepius") "Window smoke title was $($windowSmoke.window_title), not Asclepius."
-  Assert-True ($windowSmoke.shell_style -eq "codex-style-shared-shell") "Window smoke did not report the shared Codex-style shell."
-  Assert-True ([bool]($windowSmoke.shared_ready_and_first_run_shell)) "Ready and first-run paths should use the same shell."
-  Assert-True ([double]($windowSmoke.contrast_text_background) -ge 4.5) "Text/background contrast is below WCAG AA."
-  Assert-True ([double]($windowSmoke.contrast_muted_surface) -ge 4.5) "Muted/surface contrast is below WCAG AA."
-  Assert-True ([int]($windowSmoke.keyboard_controls) -ge 5) "Expected keyboard-operable controls in the app."
-  Assert-True ([int]($windowSmoke.accessible_named_controls) -ge 8) "Expected accessible names on major controls."
-  Add-Check "installed_app" ("workspace {0}" -f $smoke.workspace)
+  Assert-True ($dryRun.CodexDesktopExe -like "*Codex.exe") "Dry-run did not resolve the real Codex Desktop executable."
+  Assert-True ($dryRun.CodexHome -like "*\.codex-nous-cloud\codex-home") "Dry-run did not use the isolated Asclepius Codex home."
+  Add-Check "installed_launcher" $dryRun.CodexDesktopExe
 }
 
 function Test-Shortcut {
@@ -98,8 +72,9 @@ function Test-Shortcut {
   $shortcut = $wsh.CreateShortcut($shortcutPath)
   $target = $shortcut.TargetPath
   Assert-True (Test-Path -LiteralPath $target) "Shortcut target does not exist: $target"
-  Assert-True ($target -ieq (Join-Path $InstalledRoot "Asclepius.exe")) "Shortcut target is $target, not installed Asclepius.exe."
-  Add-Check "desktop_shortcut" $target
+  Assert-True ($target -match 'wscript\.exe$') "Shortcut target is $target, not the VBS launcher host."
+  Assert-True ($shortcut.Arguments -like "*Launch-CloudCodexApp.vbs*") "Shortcut does not launch the real-Codex app VBS."
+  Add-Check "desktop_shortcut" ("{0} {1}" -f $target, $shortcut.Arguments)
 }
 
 function Test-DefaultCodexUntouched {
@@ -133,8 +108,12 @@ function Test-Package {
     $archive.Dispose()
   }
 
-  foreach ($required in @("AsclepiusApp.cs", "Build-AsclepiusApp.ps1", "Test-Asclepius.ps1")) {
+  foreach ($required in @("Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Test-Asclepius.ps1")) {
     Assert-True ($entries -contains $required) "Package missing $required"
+  }
+
+  foreach ($removed in @("AsclepiusApp.cs", "Build-AsclepiusApp.ps1")) {
+    Assert-True (-not ($entries -contains $removed)) "Package should not include removed fake app file $removed"
   }
 
   $forbidden = $entries | Where-Object {
@@ -152,8 +131,7 @@ function Test-Package {
 
 Test-PowerShellSyntax
 Test-PythonBridge
-Test-SourceBuild
-Test-InstalledApp
+Test-InstalledLauncher
 Test-Shortcut
 Test-DefaultCodexUntouched
 Test-Package

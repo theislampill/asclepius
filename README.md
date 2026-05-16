@@ -1,11 +1,9 @@
 # Cloud-Codex
 
 Cloud-Codex is an isolated Codex Desktop launcher profile for cloud model routing.
-Asclepius is the Windows supervisor app that owns the user-facing control
-surface while keeping Codex Desktop and Hermes independently updateable.
-Its normal ready state and first-run wizard both use the same Codex-like app
-shell: sidebar navigation, a central conversation surface, and a bottom
-composer with model/provider controls.
+Asclepius is not a replacement app. It is a desktop shortcut plus launcher
+scripts that start the real signed Codex Desktop app with an isolated
+Hermes-backed profile.
 
 This redistributable baseline does not include Codex, Hermes, credentials, logs,
 generated model catalogs, or Electron profile state. It installs only local
@@ -16,10 +14,10 @@ installations at runtime.
 
 - Keeps the default Codex profile untouched.
 - Creates an isolated Codex home under `%USERPROFILE%\.codex-nous-cloud`.
-- Builds a local `Asclepius.exe` supervisor app and adds a desktop launcher
-  named `asclepius.lnk`.
-- Presents first-run setup and normal launch inside one shared Codex-style UI
-  instead of switching between wizard and utility-window layouts.
+- Adds a desktop launcher named `asclepius.lnk` that runs
+  `Launch-CloudCodexApp.vbs`, prepares services/profile state, and opens the
+  real Codex Desktop executable.
+- Does not build or install an `Asclepius.exe` UI.
 - Starts a local-only Responses bridge on `127.0.0.1:8655`.
 - Starts Hermes' Nous OAuth proxy on `127.0.0.1:8645` when needed.
 - Routes Codex turns through `hermes chat` by default so Hermes sessions,
@@ -32,8 +30,8 @@ installations at runtime.
   - `OpenRouter | deepseek/deepseek-v4-flash`
 - Supports Hermes OAuth login for free Nous models.
 - Supports optional direct provider API keys stored only in the installed local profile.
-- Provides in-app controls for Hermes Golden updates and Hermes session
-  deletion without modifying Codex Desktop's own updater.
+- Keeps Hermes Golden update and Hermes session deletion as separate helper
+  scripts without modifying Codex Desktop's own updater.
 
 ## Architecture
 
@@ -51,41 +49,36 @@ Hermes executes tools in its own WSL runtime. The Codex Desktop sandbox selector
 is visible profile intent, not a hard sandbox around Hermes tools, so the bridge
 adds that policy and workspace mapping to each Hermes turn.
 
-Asclepius owns its supervisor window and launcher identity. When it launches
-the signed Codex Desktop executable, Codex's own editing/chat window still
-belongs to Codex. This package does not modify or repackage Codex Desktop.
+Asclepius owns no chat window. The visible app is Codex Desktop. This package
+does not modify or repackage Codex Desktop.
 
 ## Design Discipline
 
 - **12FA:** Codex and Hermes are explicit external dependencies; runtime config
   is passed through environment variables and isolated profile files; build,
   install, and run are separate scripts; child processes are disposable; logs
-  stream into the Asclepius UI/status surface.
-- **Nemawashi:** Asclepius is a supervisor beside Codex, not a Codex patch.
+  stream through launcher/service logs.
+- **Nemawashi:** Asclepius is a launcher/profile beside Codex, not a Codex patch
+  and not a fake Codex UI.
   Affected owners are Codex Desktop, Hermes Agent, and the local Asclepius
   profile. Rollback is replacing `asclepius.lnk` with the old VBS picker target
   or launching `Launch-CloudCodexModelPicker.vbs` directly.
 - **ZTA:** Sensitive actions route through local scripts under the Asclepius
   root, confirm paid/unknown models, and keep Hermes updates/session deletion
   behind explicit user action.
-- **Secret Egress Filter:** The supervisor redacts common token/key/cookie
-  shapes before showing command output in the UI.
-- **SOLID:** Asclepius keeps separate responsibilities for app supervision,
-  model catalog loading, process launch, secret filtering, and smoke checks.
+- **Secret Egress Filter:** Local scripts avoid packaging or printing stored
+  secrets; credentials remain in ignored profile-local files.
+- **SOLID:** Asclepius keeps separate responsibilities for model catalog
+  loading, process launch, provider auth helpers, and smoke checks.
   Provider/model sections are data-driven so adding a route should not require
   renderer rewrites.
 - **Normal Form:** Workspace paths are canonicalized and converted to WSL paths
   before being handed to Hermes.
 - **E2E:** `Test-Asclepius.ps1` keeps the critical path small but meaningful:
-  syntax/build, installed app smoke, visible window identity, shortcut target,
-  default Codex profile observation, and package hygiene.
-- **WCAG / POUR:** The app uses high-contrast text, visible status text,
-  keyboard-operable buttons, accessible names on major controls, and smoke
-  assertions for contrast and basic operability metadata.
-- **PE:** First-run content works before services or catalogs are ready: the
-  shared Codex-style shell shows dependency status, install actions, and a safe
-  fallback Nous route, then progressively enables richer launch/model behavior
-  as checks pass.
+  syntax checks, real-Codex launcher dry-run, shortcut target, default Codex
+  profile observation, and package hygiene.
+- **WCAG / POUR / PE:** The user-facing UI is Codex Desktop itself. Setup helper
+  scripts remain secondary and should not masquerade as Codex.
 
 Set `CODEX_CLOUD_RUNTIME_MODE=proxy` before starting the bridge to force the
 older raw model-proxy behavior for debugging.
@@ -117,8 +110,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Manage-AsclepiusHermes
 - WSL Ubuntu with Hermes installed at `/home/agent/.local/bin/hermes`.
 - A Hermes Nous OAuth login for free Nous Portal models.
 
-If Codex, WSL Ubuntu, Hermes, or Python are missing, Asclepius shows first-run
-install buttons with progress logs instead of launching into a broken profile.
+If Codex, WSL Ubuntu, Hermes, or Python are missing, run
+`Install-AsclepiusDependency.ps1` for the missing dependency, then rerun the
+installer. The normal `asclepius.lnk` path is reserved for launching Codex.
 
 ## Install
 
@@ -128,19 +122,19 @@ From this directory:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-CodexNousCloud.ps1
 ```
 
-Then open `asclepius.lnk` from the desktop.
+Then open `asclepius.lnk` from the desktop. It should open Codex Desktop, not a
+separate Asclepius window.
 
-If the picker says Nous OAuth login is needed, click `Nous OAuth Login`.
+If Nous OAuth login is needed, run:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start-HermesNousOAuthLogin.ps1
+```
 
 ## Provider Auth
 
 Nous free models use Hermes OAuth by default. No Nous API key is required for
 free Nous routes.
-
-Optional keys may be set in the picker:
-
-- `Set Nous API Key`: optional direct Nous API auth.
-- `Set OpenRouter Key`: required for OpenRouter routes.
 
 Installed keys are written only to:
 
