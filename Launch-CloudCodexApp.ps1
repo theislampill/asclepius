@@ -14,6 +14,7 @@ $CloudModelsPath = Join-Path $Root "cloud-models.json"
 $InstructionsPath = Join-Path $Root "cloud-codex-instructions.md"
 $WindowIdentityProbe = Join-Path $Root "Test-AsclepiusWindowIdentity.ps1"
 $WindowIdentityWatcher = Join-Path $Root "Start-AsclepiusWindowIdentityWatcher.ps1"
+$HermesTitlebarOverlay = Join-Path $Root "Start-AsclepiusHermesTitlebarOverlay.ps1"
 $AppUserModelId = "NousResearch.Asclepius.Codex"
 $WindowTitle = "Asclepius"
 
@@ -430,6 +431,7 @@ $launchInfo = [PSCustomObject]@{
   AppUserModelId = $AppUserModelId
   WindowTitle = $WindowTitle
   WindowIdentityWatcher = $WindowIdentityWatcher
+  HermesTitlebarOverlay = $HermesTitlebarOverlay
 }
 
 if ($HostInfoJson) {
@@ -471,6 +473,17 @@ if (-not $NoWindowIdentity) {
         -AppUserModelId $AppUserModelId `
         -WindowTitle $WindowTitle `
         -KeepOpenSeconds 0 | Out-Null
+    }
+
+    if (Test-Path -LiteralPath $HermesTitlebarOverlay) {
+      Start-Process -FilePath "powershell.exe" -ArgumentList @(
+        "-STA",
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-WindowStyle", "Hidden",
+        "-File", $HermesTitlebarOverlay,
+        "-TargetProcessId", ([string]$target.Id)
+      ) -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
     }
   }
 }

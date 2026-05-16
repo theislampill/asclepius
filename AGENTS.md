@@ -46,6 +46,22 @@ a wrapper that should disturb the user's normal Codex session.
 - Keep the launcher chrome dark using `WindowStyle=None`, local title buttons,
   and DWM dark border/caption attributes. Avoid native resizable WPF chrome if
   it brings back the white top edge.
+- The launcher is not resizable or maximizable. Do not restore the native
+  maximize button or double-click-to-maximize behavior.
+- The refresh control is an icon button. Hermes update state belongs beside it:
+  show `Hermes up to date` when current and an explicit `Update Hermes` chip
+  with version/commit-behind detail when outdated.
+
+## Hermes Update Overlay Rules
+
+- A Codex titlebar update chip must be an external Asclepius-owned overlay
+  anchored to the Asclepius Codex HWND. Do not inject into Codex, edit memory,
+  patch files under WindowsApps, or hijack Codex's own blue update button.
+- The overlay may open `Update-HermesGolden.ps1` and refresh status while Codex
+  stays open. It must hide when Hermes is current, the target Codex window is
+  minimized, or the target Codex window is not foreground.
+- Start the overlay only after the isolated Asclepius Codex PID/HWND is found.
+  Never target the user's normal Codex session.
 
 ## Auth And Packaging Rules
 

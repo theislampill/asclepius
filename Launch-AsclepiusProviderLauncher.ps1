@@ -11,6 +11,7 @@ $LegacyModelFile = Join-Path $Root "nous-models.json"
 $SecretsFile = Join-Path $Root "cloud-secrets.json"
 $ConfigFile = Join-Path $CodexHome "config.toml"
 $DefaultModel = "nous/deepseek/deepseek-v4-flash"
+$HermesStatusScript = Join-Path $Root "Get-AsclepiusHermesStatus.ps1"
 
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
@@ -354,6 +355,13 @@ function Test-ModelCanRun {
       <Setter Property="FontWeight" Value="SemiBold"/>
       <Setter Property="Padding" Value="18,0"/>
     </Style>
+    <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource PillButton}">
+      <Setter Property="Width" Value="40"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+      <Setter Property="FontSize" Value="14"/>
+      <Setter Property="Content" Value="&#xE72C;"/>
+    </Style>
     <Style x:Key="TitleButton" TargetType="Button">
       <Setter Property="Width" Value="46"/>
       <Setter Property="Height" Value="34"/>
@@ -546,7 +554,6 @@ function Test-ModelCanRun {
         <DockPanel LastChildFill="True">
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
             <Button Name="MinimizeButton" Style="{StaticResource TitleButton}" Content="&#xE921;"/>
-            <Button Name="MaximizeButton" Style="{StaticResource TitleButton}" Content="&#xE922;"/>
             <Button Name="CloseButton" Style="{StaticResource CloseTitleButton}" Content="&#xE8BB;"/>
           </StackPanel>
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -635,11 +642,13 @@ function Test-ModelCanRun {
               <Grid Grid.Row="5">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
                   <ColumnDefinition Width="*"/>
                   <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <Button Name="RefreshButton" Grid.Column="0" Style="{StaticResource PillButton}" Content="Refresh"/>
-                <Button Name="LaunchButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="Launch"/>
+                <Button Name="RefreshButton" Grid.Column="0" Style="{StaticResource IconButton}" ToolTip="Refresh model catalog"/>
+                <Button Name="HermesStatusButton" Grid.Column="1" Style="{StaticResource PillButton}" Margin="10,0,0,0" Content="Checking Hermes..."/>
+                <Button Name="LaunchButton" Grid.Column="3" Style="{StaticResource PrimaryButton}" Content="Launch"/>
               </Grid>
             </Grid>
           </Border>
@@ -655,8 +664,8 @@ $reader = New-Object System.Xml.XmlNodeReader $xaml
 $script:Window = [Windows.Markup.XamlReader]::Load($reader)
 
 $names = @(
-  "TitleBar","TitleFileButton","TitleToolsButton","MinimizeButton","MaximizeButton","CloseButton",
-  "RefreshButton","RouteSummary","StatusBlock","FilterBox","RouteCombo",
+  "TitleBar","TitleFileButton","TitleToolsButton","MinimizeButton","CloseButton",
+  "RefreshButton","HermesStatusButton","RouteSummary","StatusBlock","FilterBox","RouteCombo",
   "LaunchButton","AuthBlock","InstallPanel","InstallCodexButton","InstallWslButton",
   "InstallHermesButton","InstallPythonButton","RefreshChecksButton"
 )
@@ -686,10 +695,90 @@ $script:Window.Add_SourceInitialized({
 
 $script:Catalog = $null
 $script:AllModels = @()
+$script:HermesOutdated = $false
 
 function Set-Status {
   param([string]$Text)
   $script:StatusBlock.Text = $Text
+}
+
+function Set-ControlBrush {
+  param(
+    [Parameter(Mandatory)]$Control,
+    [Parameter(Mandatory)][string]$Background,
+    [string]$Border,
+    [string]$Foreground
+  )
+  $converter = New-Object System.Windows.Media.BrushConverter
+  $Control.Background = $converter.ConvertFromString($Background)
+  if ($Border) { $Control.BorderBrush = $converter.ConvertFromString($Border) }
+  if ($Foreground) { $Control.Foreground = $converter.ConvertFromString($Foreground) }
+}
+
+function Get-HermesStatus {
+  if (-not (Test-Path -LiteralPath $HermesStatusScript)) { return $null }
+  try {
+    $json = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $HermesStatusScript -Json |
+      Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+      Select-Object -Last 1
+    if ([string]::IsNullOrWhiteSpace([string]$json)) { return $null }
+    return ($json | ConvertFrom-Json)
+  } catch {
+    return [pscustomobject]@{
+      installed = $false
+      state = "unavailable"
+      summary = "Hermes status unavailable"
+      tooltip = $_.Exception.Message
+    }
+  }
+}
+
+function Update-HermesStatusIndicator {
+  $status = Get-HermesStatus
+  if (-not $status) {
+    $script:HermesOutdated = $false
+    $script:HermesStatusButton.Content = "Hermes status unavailable"
+    $script:HermesStatusButton.ToolTip = "The Hermes status helper is missing."
+    $script:HermesStatusButton.IsEnabled = $false
+    Set-ControlBrush -Control $script:HermesStatusButton -Background "#2F2F2F" -Border "#444444" -Foreground "#A6A6A6"
+    return
+  }
+
+  if ($status.state -eq "outdated") {
+    $current = if ($status.current_version) { "v$($status.current_version)" } else { $status.local_commit }
+    $latest = if ($status.latest_version) { "v$($status.latest_version)" } else { $status.remote_commit }
+    $script:HermesOutdated = $true
+    $script:HermesStatusButton.Content = "Update Hermes: $($status.behind) commits behind | $current -> $latest"
+    $script:HermesStatusButton.ToolTip = $status.tooltip
+    $script:HermesStatusButton.IsEnabled = $true
+    Set-ControlBrush -Control $script:HermesStatusButton -Background "#3B2A18" -Border "#73501D" -Foreground "#FFD18A"
+    return
+  }
+
+  if ($status.state -eq "current") {
+    $script:HermesOutdated = $false
+    $script:HermesStatusButton.Content = "Hermes up to date"
+    $script:HermesStatusButton.ToolTip = $status.tooltip
+    $script:HermesStatusButton.IsEnabled = $false
+    Set-ControlBrush -Control $script:HermesStatusButton -Background "#1F3528" -Border "#3C6B4B" -Foreground "#9EE6B3"
+    return
+  }
+
+  $script:HermesOutdated = $false
+  $script:HermesStatusButton.Content = $status.summary
+  $script:HermesStatusButton.ToolTip = $status.tooltip
+  $script:HermesStatusButton.IsEnabled = $false
+  Set-ControlBrush -Control $script:HermesStatusButton -Background "#2F2F2F" -Border "#444444" -Foreground "#A6A6A6"
+}
+
+function Start-HermesUpdate {
+  $scriptPath = Join-Path $Root "Update-HermesGolden.ps1"
+  if (-not (Test-Path -LiteralPath $scriptPath)) {
+    Set-Status "Hermes update script missing."
+    return
+  }
+  Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$scriptPath) -WorkingDirectory $Root | Out-Null
+  Set-Status "Hermes update opened. Asclepius and Codex stay open while Hermes updates."
 }
 
 function Get-DefaultModelFromCatalog {
@@ -830,16 +919,11 @@ function Populate-Models {
 }
 
 $script:TitleBar.Add_MouseLeftButtonDown({
-  if ($_.ClickCount -eq 2) {
-    if ($script:Window.WindowState -eq [System.Windows.WindowState]::Maximized) { $script:Window.WindowState = [System.Windows.WindowState]::Normal } else { $script:Window.WindowState = [System.Windows.WindowState]::Maximized }
-  } else {
+  if ($_.ClickCount -lt 2) {
     try { $script:Window.DragMove() } catch {}
   }
 })
 $script:MinimizeButton.Add_Click({ $script:Window.WindowState = [System.Windows.WindowState]::Minimized })
-$script:MaximizeButton.Add_Click({
-  if ($script:Window.WindowState -eq [System.Windows.WindowState]::Maximized) { $script:Window.WindowState = [System.Windows.WindowState]::Normal } else { $script:Window.WindowState = [System.Windows.WindowState]::Maximized }
-})
 $script:CloseButton.Add_Click({ $script:Window.Close() })
 $script:CloseMenuItem.Add_Click({ $script:Window.Close() })
 $script:TitleFileButton.Add_Click({
@@ -855,7 +939,17 @@ $script:TitleToolsButton.Add_Click({
 
 $script:RouteCombo.Add_SelectionChanged({ Update-Details })
 $script:FilterBox.Add_TextChanged({ Apply-Filter })
-$script:RefreshButton.Add_Click({ Populate-Models -ForceRefresh })
+$script:RefreshButton.Add_Click({
+  Populate-Models -ForceRefresh
+  Update-HermesStatusIndicator
+})
+$script:HermesStatusButton.Add_Click({
+  if ($script:HermesOutdated) {
+    Start-HermesUpdate
+  } else {
+    Update-HermesStatusIndicator
+  }
+})
 $script:OAuthMenuItem.Add_Click({
   $script = Join-Path $Root "Start-HermesNousOAuthLogin.ps1"
   if (Test-Path -LiteralPath $script) {
@@ -866,13 +960,7 @@ $script:OAuthMenuItem.Add_Click({
   }
 })
 $script:HermesUpdateMenuItem.Add_Click({
-  $script = Join-Path $Root "Update-HermesGolden.ps1"
-  if (Test-Path -LiteralPath $script) {
-    Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$script) -WorkingDirectory $Root | Out-Null
-    Set-Status "Hermes update opened."
-  } else {
-    Set-Status "Hermes update script missing."
-  }
+  Start-HermesUpdate
 })
 $script:SessionsMenuItem.Add_Click({
   $script = Join-Path $Root "Manage-AsclepiusHermesSessions.ps1"
@@ -909,7 +997,10 @@ $script:InstallCodexButton.Add_Click({ Start-DependencyInstall -Target "Codex" }
 $script:InstallWslButton.Add_Click({ Start-DependencyInstall -Target "WslUbuntu" })
 $script:InstallHermesButton.Add_Click({ Start-DependencyInstall -Target "Hermes" })
 $script:InstallPythonButton.Add_Click({ Start-DependencyInstall -Target "Python" })
-$script:RefreshChecksButton.Add_Click({ Update-DependencyStatus })
+$script:RefreshChecksButton.Add_Click({
+  Update-DependencyStatus
+  Update-HermesStatusIndicator
+})
 $script:LaunchButton.Add_Click({
   $m = Get-SelectedModel
   if ($m -and (Test-ModelCanRun -Model $m)) {
@@ -931,6 +1022,7 @@ $script:SmokeMenuItem.Add_Click({
 
 $script:Window.Add_Loaded({
   Update-DependencyStatus
+  Update-HermesStatusIndicator
   if ($UiSmoke) {
     $script:RouteSummary.Text = "UI smoke"
     Set-Status "UI smoke ready."

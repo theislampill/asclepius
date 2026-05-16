@@ -37,6 +37,10 @@ installations at runtime.
   never included in the redistributable package.
 - Keeps Hermes Golden update and Hermes session deletion as separate helper
   scripts without modifying Codex Desktop's own updater.
+- Checks Hermes Golden against `origin/main` at runtime. If Hermes is behind,
+  the picker shows an `Update Hermes` chip with commit/version details, and the
+  Asclepius-launched Codex window gets a small external titlebar overlay that
+  can open the Hermes updater without relaunching Codex or Asclepius.
 
 ## Architecture
 
@@ -62,6 +66,10 @@ When Codex launches through Asclepius, a hidden window-identity watcher targets
 only the fresh Codex PID/HWND created by that launch. It keeps the window title
 and AppUserModelID set to Asclepius, because Codex may reset its own title after
 project or chat state changes.
+
+A separate hidden overlay process may anchor an update chip to that same
+Asclepius Codex HWND when Hermes is out of date. It is an external WPF overlay,
+not code injection, memory editing, or a Codex binary patch.
 
 ## Design Discipline
 
@@ -101,7 +109,7 @@ those waits so Codex does not look silently disconnected.
 ## Updates And Memory
 
 Codex Desktop's blue `Update` control remains Codex-only. Use the Asclepius
-picker's `Hermes Golden Update` button, or run:
+picker's `Update Hermes` chip, the out-of-date titlebar overlay, or run:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Update-HermesGolden.ps1
