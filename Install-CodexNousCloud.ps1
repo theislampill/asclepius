@@ -6,8 +6,6 @@ $ElectronUserData = Join-Path $Root "electron-user-data"
 $DesktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "asclepius.lnk"
 
 $required = @(
-  "AsclepiusHost.cs",
-  "Build-AsclepiusHost.ps1",
   "Test-Asclepius.ps1",
   "Install-AsclepiusDependency.ps1",
   "codex_nous_bridge.py",
@@ -38,13 +36,13 @@ foreach ($name in $required) {
 }
 
 Remove-Item -LiteralPath (Join-Path $Root "Asclepius.exe") -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $Root "AsclepiusHost.cs") -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $Root "Build-AsclepiusHost.ps1") -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $Root "AsclepiusApp.cs") -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $Root "Build-AsclepiusApp.ps1") -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $Root "asclepius-smoke.json") -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $Root "asclepius-window-smoke.json") -Force -ErrorAction SilentlyContinue
-
-& (Join-Path $Root "Build-AsclepiusHost.ps1") | Out-Null
-$asclepiusExe = Join-Path $Root "Asclepius.exe"
+Remove-Item -LiteralPath (Join-Path $Root "asclepius-host-smoke.json") -Force -ErrorAction SilentlyContinue
 
 $catalog = Join-Path $Root "codex-model-catalog.json"
 $escapedCatalog = $catalog.Replace("\", "\\")
@@ -87,10 +85,10 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 $wsh = New-Object -ComObject WScript.Shell
 $shortcut = $wsh.CreateShortcut($DesktopShortcut)
-$shortcut.TargetPath = $asclepiusExe
-$shortcut.Arguments = ""
+$shortcut.TargetPath = "wscript.exe"
+$shortcut.Arguments = "`"$Root\Launch-CloudCodexApp.vbs`""
 $shortcut.WorkingDirectory = $Root
-$shortcut.Description = "Asclepius host for real Codex Desktop with the isolated Hermes profile"
+$shortcut.Description = "Launch real Codex Desktop with the isolated Asclepius Hermes profile"
 
 $codexExe = $null
 try {
@@ -98,9 +96,7 @@ try {
     Sort-Object Path -Descending |
     Select-Object -First 1).Path
 } catch {}
-if (Test-Path -LiteralPath $asclepiusExe) {
-  $shortcut.IconLocation = "$asclepiusExe,0"
-} elseif ($codexExe) {
+if ($codexExe) {
   $shortcut.IconLocation = "$codexExe,0"
 }
 $shortcut.Save()
@@ -115,6 +111,6 @@ try {
 Write-Output "Installed to $Root"
 Write-Output "Isolated CODEX_HOME: $CodexHome"
 Write-Output "Desktop shortcut: $DesktopShortcut"
-Write-Output "Shortcut launches Asclepius.exe, which hosts the real Codex Desktop window."
+Write-Output "Shortcut launches real Codex Desktop through Launch-CloudCodexApp.vbs."
 Write-Output "Catalog auto-refresh: $refreshMode"
 Write-Output "No Codex binaries, credentials, logs, or Electron state were copied from this package."

@@ -1,10 +1,8 @@
 # Cloud-Codex
 
 Cloud-Codex is an isolated Codex Desktop launcher profile for cloud model routing.
-Asclepius is a thin supervisor host for the real signed Codex Desktop app. In
-normal use it embeds the actual Codex window and shows only Codex. It shows its
-own surface only when it needs to: launch/setup failure, dependency repair, Nous
-OAuth, Hermes update, or Hermes session/memory management.
+Asclepius is a safe launcher/profile for the real signed Codex Desktop app. It
+does not embed, parent, repackage, or modify the Codex window.
 
 This redistributable baseline does not include Codex, Hermes, credentials, logs,
 generated model catalogs, or Electron profile state. It installs only local
@@ -15,11 +13,11 @@ installations at runtime.
 
 - Keeps the default Codex profile untouched.
 - Creates an isolated Codex home under `%USERPROFILE%\.codex-nous-cloud`.
-- Builds a local `Asclepius.exe` host and adds a desktop launcher named
-  `asclepius.lnk`.
-- Hosts the real Codex Desktop window inside the Asclepius top-level window so
-  Alt-Tab identifies the supervised workspace as Asclepius while the visible
-  app content remains Codex.
+- Adds a desktop launcher named `asclepius.lnk` that runs
+  `Launch-CloudCodexApp.vbs`, prepares services/profile state, and opens the
+  real Codex Desktop executable.
+- Does not install an `Asclepius.exe` host. Earlier window-parenting host
+  attempts were removed because they can destabilize Codex.
 - Starts a local-only Responses bridge on `127.0.0.1:8655`.
 - Starts Hermes' Nous OAuth proxy on `127.0.0.1:8645` when needed.
 - Routes Codex turns through `hermes chat` by default so Hermes sessions,
@@ -33,8 +31,7 @@ installations at runtime.
 - Supports Hermes OAuth login for free Nous models.
 - Supports optional direct provider API keys stored only in the installed local profile.
 - Keeps Hermes Golden update and Hermes session deletion as separate helper
-  scripts without modifying Codex Desktop's own updater. These are reachable
-  from the Asclepius tray menu while Codex remains the visible work surface.
+  scripts without modifying Codex Desktop's own updater.
 
 ## Architecture
 
@@ -52,8 +49,8 @@ Hermes executes tools in its own WSL runtime. The Codex Desktop sandbox selector
 is visible profile intent, not a hard sandbox around Hermes tools, so the bridge
 adds that policy and workspace mapping to each Hermes turn.
 
-Asclepius owns the top-level host window. The hosted child content is Codex
-Desktop. This package does not modify or repackage Codex Desktop.
+Asclepius owns no chat window. The visible app is Codex Desktop. This package
+does not modify, embed, or repackage Codex Desktop.
 
 ## Design Discipline
 
@@ -61,8 +58,8 @@ Desktop. This package does not modify or repackage Codex Desktop.
   is passed through environment variables and isolated profile files; build,
   install, and run are separate scripts; child processes are disposable; logs
   stream through launcher/service logs.
-- **Nemawashi:** Asclepius is a host/profile beside Codex, not a Codex patch
-  and not a fake Codex UI.
+- **Nemawashi:** Asclepius is a launcher/profile beside Codex, not a Codex
+  patch, host, or fake Codex UI.
   Affected owners are Codex Desktop, Hermes Agent, and the local Asclepius
   profile. Rollback is replacing `asclepius.lnk` with the old VBS picker target
   or launching `Launch-CloudCodexModelPicker.vbs` directly.
@@ -124,8 +121,8 @@ From this directory:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-CodexNousCloud.ps1
 ```
 
-Then open `asclepius.lnk` from the desktop. Alt-Tab should show Asclepius; the
-content inside the window should be Codex Desktop.
+Then open `asclepius.lnk` from the desktop. It opens Codex Desktop directly.
+Alt-Tab will identify the signed app as Codex.
 
 If Nous OAuth login is needed, run:
 
