@@ -3,7 +3,7 @@ $Source = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root = Join-Path $env:USERPROFILE ".codex-nous-cloud"
 $CodexHome = Join-Path $Root "codex-home"
 $ElectronUserData = Join-Path $Root "electron-user-data"
-$DesktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "Cloud-Codex.lnk"
+$DesktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "asclepius.lnk"
 
 $required = @(
   "codex_nous_bridge.py",
@@ -77,7 +77,7 @@ $shortcut = $wsh.CreateShortcut($DesktopShortcut)
 $shortcut.TargetPath = "wscript.exe"
 $shortcut.Arguments = "`"$Root\Launch-CloudCodexModelPicker.vbs`""
 $shortcut.WorkingDirectory = $Root
-$shortcut.Description = "Cloud-Codex isolated launcher"
+$shortcut.Description = "Asclepius isolated Cloud-Codex launcher"
 
 $codexExe = $null
 try {

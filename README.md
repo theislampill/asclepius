@@ -11,7 +11,7 @@ installations at runtime.
 
 - Keeps the default Codex profile untouched.
 - Creates an isolated Codex home under `%USERPROFILE%\.codex-nous-cloud`.
-- Adds a desktop launcher named `Cloud-Codex.lnk`.
+- Adds a desktop launcher named `asclepius.lnk`.
 - Starts a local-only Responses bridge on `127.0.0.1:8655`.
 - Starts Hermes' Nous OAuth proxy on `127.0.0.1:8645` when needed.
 - Routes Codex turns through `hermes chat` by default so Hermes sessions,
@@ -86,7 +86,7 @@ From this directory:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-CodexNousCloud.ps1
 ```
 
-Then open `Cloud-Codex.lnk` from the desktop.
+Then open `asclepius.lnk` from the desktop.
 
 If the picker says Nous OAuth login is needed, click `Nous OAuth Login`.
 
