@@ -14,8 +14,9 @@ installations at runtime.
 - Keeps the default Codex profile untouched.
 - Creates an isolated Codex home under `%USERPROFILE%\.codex-nous-cloud`.
 - Adds a desktop launcher named `asclepius.lnk` that runs
-  `Launch-CloudCodexApp.vbs`, prepares services/profile state, and opens the
-  real Codex Desktop executable.
+  `Launch-CloudCodexModelPicker.vbs`, shows the Asclepius model/portal
+  supervisor, then opens the real Codex Desktop executable with the isolated
+  profile.
 - Does not install an `Asclepius.exe` host. Earlier window-parenting host
   attempts were removed because they can destabilize Codex.
 - Starts a local-only Responses bridge on `127.0.0.1:8655`.
@@ -61,8 +62,8 @@ does not modify, embed, or repackage Codex Desktop.
 - **Nemawashi:** Asclepius is a launcher/profile beside Codex, not a Codex
   patch, host, or fake Codex UI.
   Affected owners are Codex Desktop, Hermes Agent, and the local Asclepius
-  profile. Rollback is replacing `asclepius.lnk` with the old VBS picker target
-  or launching `Launch-CloudCodexModelPicker.vbs` directly.
+  profile. Rollback is launching `Launch-CloudCodexApp.vbs` directly or using
+  normal Codex without the Asclepius shortcut.
 - **ZTA:** Sensitive actions route through local scripts under the Asclepius
   root, confirm paid/unknown models, and keep Hermes updates/session deletion
   behind explicit user action.
@@ -121,8 +122,11 @@ From this directory:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-CodexNousCloud.ps1
 ```
 
-Then open `asclepius.lnk` from the desktop. It opens Codex Desktop directly.
-Alt-Tab will identify the signed app as Codex.
+Then open `asclepius.lnk` from the desktop. It opens the Asclepius
+model/portal supervisor first. After you choose a route, it launches the real
+signed Codex Desktop app. Alt-Tab for the supervisor identifies it as
+Asclepius; Alt-Tab for the real Codex window still identifies the signed app as
+Codex because Asclepius does not inject into, reparent, or repackage Codex.
 
 If Nous OAuth login is needed, run:
 

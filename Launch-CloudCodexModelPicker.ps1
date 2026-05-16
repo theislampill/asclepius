@@ -11,6 +11,39 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName Microsoft.VisualBasic
 
+$script:Theme = @{
+  Window = [System.Drawing.Color]::FromArgb(18, 18, 18)
+  Panel = [System.Drawing.Color]::FromArgb(31, 31, 31)
+  Control = [System.Drawing.Color]::FromArgb(44, 44, 44)
+  ControlLight = [System.Drawing.Color]::FromArgb(57, 57, 57)
+  Text = [System.Drawing.Color]::FromArgb(245, 245, 245)
+  Muted = [System.Drawing.Color]::FromArgb(176, 176, 176)
+  Accent = [System.Drawing.Color]::FromArgb(97, 154, 255)
+}
+
+function Set-AsclepiusTheme {
+  param([Parameter(Mandatory)]$Control)
+  $Control.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+  $Control.ForeColor = $script:Theme.Text
+  if ($Control -is [System.Windows.Forms.Form]) {
+    $Control.BackColor = $script:Theme.Window
+  } elseif ($Control -is [System.Windows.Forms.Button]) {
+    $Control.BackColor = $script:Theme.Control
+    $Control.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $Control.FlatAppearance.BorderColor = $script:Theme.ControlLight
+    $Control.FlatAppearance.MouseOverBackColor = $script:Theme.ControlLight
+  } elseif ($Control -is [System.Windows.Forms.TextBox] -or $Control -is [System.Windows.Forms.ComboBox]) {
+    $Control.BackColor = $script:Theme.Panel
+    $Control.ForeColor = $script:Theme.Text
+  } elseif ($Control -is [System.Windows.Forms.Label]) {
+    $Control.BackColor = [System.Drawing.Color]::Transparent
+  }
+
+  foreach ($child in $Control.Controls) {
+    Set-AsclepiusTheme -Control $child
+  }
+}
+
 function Get-CurrentModel {
   if (Test-Path -LiteralPath $ConfigFile) {
     $match = Select-String -LiteralPath $ConfigFile -Pattern '^\s*model\s*=\s*"([^"]+)"' | Select-Object -First 1
@@ -99,6 +132,59 @@ function Load-Models {
   return $data
 }
 
+function Test-CodexDesktopInstalled {
+  try {
+    $codex = Resolve-Path "C:\Program Files\WindowsApps\OpenAI.Codex_*\app\Codex.exe" -ErrorAction Stop |
+      Sort-Object Path -Descending |
+      Select-Object -First 1
+    return $null -ne $codex
+  } catch {
+    return $false
+  }
+}
+
+function Test-WslUbuntuInstalled {
+  $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+  if (-not $wsl) { return $false }
+  try {
+    $distros = & $wsl.Source -l -q 2>$null
+    return @($distros) -contains "Ubuntu"
+  } catch {
+    return $false
+  }
+}
+
+function Test-HermesInstalled {
+  $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+  if (-not $wsl) { return $false }
+  try {
+    $out = & $wsl.Source -d Ubuntu -- bash -lc 'test -x "$HOME/.local/bin/hermes" && echo ok' 2>$null
+    return ($LASTEXITCODE -eq 0 -and @($out) -contains "ok")
+  } catch {
+    return $false
+  }
+}
+
+function Test-PythonInstalled {
+  return $null -ne (Get-Command python -ErrorAction SilentlyContinue)
+}
+
+function Start-DependencyInstall {
+  param([Parameter(Mandatory)][string]$Target)
+  $script = Join-Path $Root "Install-AsclepiusDependency.ps1"
+  if (-not (Test-Path -LiteralPath $script)) {
+    $status.Text = "Dependency installer not found: $script"
+    return
+  }
+  Start-Process -FilePath "powershell.exe" -ArgumentList @(
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-File", $script,
+    "-Target", $Target
+  ) -WorkingDirectory $Root | Out-Null
+  $status.Text = "$Target install window opened. Finish it, then click Refresh Checks."
+}
+
 function Get-DefaultModelFromCatalog {
   if ($script:Catalog -and $script:Catalog.default_model) {
     return [string]$script:Catalog.default_model
@@ -179,22 +265,23 @@ $script:Catalog = $null
 $script:AllModels = @()
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Cloud-Codex"
-$form.Size = New-Object System.Drawing.Size(900, 540)
+$form.Text = "Asclepius"
+$form.Size = New-Object System.Drawing.Size(960, 640)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
+$form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 
 $title = New-Object System.Windows.Forms.Label
-$title.Text = "Cloud-Codex model"
+$title.Text = "Asclepius model and portal"
 $title.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
 $title.Location = New-Object System.Drawing.Point(18, 18)
-$title.Size = New-Object System.Drawing.Size(760, 26)
+$title.Size = New-Object System.Drawing.Size(900, 26)
 $form.Controls.Add($title)
 
 $filter = New-Object System.Windows.Forms.TextBox
 $filter.Location = New-Object System.Drawing.Point(18, 50)
-$filter.Size = New-Object System.Drawing.Size(850, 26)
+$filter.Size = New-Object System.Drawing.Size(910, 26)
 if ($filter.PSObject.Properties.Name -contains "PlaceholderText") {
   $filter.PlaceholderText = "Filter by portal, model, free, paid, deepseek, stepfun..."
 }
@@ -202,7 +289,7 @@ $form.Controls.Add($filter)
 
 $combo = New-Object System.Windows.Forms.ComboBox
 $combo.Location = New-Object System.Drawing.Point(18, 84)
-$combo.Size = New-Object System.Drawing.Size(850, 28)
+$combo.Size = New-Object System.Drawing.Size(910, 28)
 $combo.DropDownStyle = "DropDownList"
 $combo.DisplayMember = "display"
 $form.Controls.Add($combo)
@@ -210,20 +297,20 @@ $form.Controls.Add($combo)
 $details = New-Object System.Windows.Forms.Label
 $details.Text = "Loading cloud catalog..."
 $details.Location = New-Object System.Drawing.Point(18, 122)
-$details.Size = New-Object System.Drawing.Size(850, 90)
+$details.Size = New-Object System.Drawing.Size(910, 90)
 $form.Controls.Add($details)
 
 $authSummary = New-Object System.Windows.Forms.Label
 $authSummary.Text = "Checking provider auth..."
 $authSummary.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
 $authSummary.Location = New-Object System.Drawing.Point(18, 220)
-$authSummary.Size = New-Object System.Drawing.Size(850, 28)
+$authSummary.Size = New-Object System.Drawing.Size(910, 28)
 $form.Controls.Add($authSummary)
 
 $status = New-Object System.Windows.Forms.Label
 $status.Text = ""
 $status.Location = New-Object System.Drawing.Point(18, 250)
-$status.Size = New-Object System.Drawing.Size(850, 34)
+$status.Size = New-Object System.Drawing.Size(910, 34)
 $form.Controls.Add($status)
 
 $launch = New-Object System.Windows.Forms.Button
@@ -288,9 +375,70 @@ $hermesSessions.Location = New-Object System.Drawing.Point(530, 348)
 $hermesSessions.Size = New-Object System.Drawing.Size(140, 34)
 $form.Controls.Add($hermesSessions)
 
+$dependencySummary = New-Object System.Windows.Forms.Label
+$dependencySummary.Text = "Checking first-run requirements..."
+$dependencySummary.Location = New-Object System.Drawing.Point(18, 402)
+$dependencySummary.Size = New-Object System.Drawing.Size(910, 44)
+$form.Controls.Add($dependencySummary)
+
+$installCodex = New-Object System.Windows.Forms.Button
+$installCodex.Text = "Install Codex"
+$installCodex.Location = New-Object System.Drawing.Point(18, 456)
+$installCodex.Size = New-Object System.Drawing.Size(120, 34)
+$form.Controls.Add($installCodex)
+
+$installWsl = New-Object System.Windows.Forms.Button
+$installWsl.Text = "Install WSL Ubuntu"
+$installWsl.Location = New-Object System.Drawing.Point(152, 456)
+$installWsl.Size = New-Object System.Drawing.Size(140, 34)
+$form.Controls.Add($installWsl)
+
+$installHermes = New-Object System.Windows.Forms.Button
+$installHermes.Text = "Install Hermes"
+$installHermes.Location = New-Object System.Drawing.Point(306, 456)
+$installHermes.Size = New-Object System.Drawing.Size(120, 34)
+$form.Controls.Add($installHermes)
+
+$installPython = New-Object System.Windows.Forms.Button
+$installPython.Text = "Install Python"
+$installPython.Location = New-Object System.Drawing.Point(440, 456)
+$installPython.Size = New-Object System.Drawing.Size(120, 34)
+$form.Controls.Add($installPython)
+
+$refreshChecks = New-Object System.Windows.Forms.Button
+$refreshChecks.Text = "Refresh Checks"
+$refreshChecks.Location = New-Object System.Drawing.Point(574, 456)
+$refreshChecks.Size = New-Object System.Drawing.Size(130, 34)
+$form.Controls.Add($refreshChecks)
+
 function Get-SelectedModel {
   if (-not $combo.SelectedItem) { return $null }
   return $combo.SelectedItem
+}
+
+function Update-DependencyStatus {
+  $codexOk = Test-CodexDesktopInstalled
+  $wslOk = Test-WslUbuntuInstalled
+  $hermesOk = if ($wslOk) { Test-HermesInstalled } else { $false }
+  $pythonOk = Test-PythonInstalled
+
+  $installCodex.Visible = -not $codexOk
+  $installWsl.Visible = -not $wslOk
+  $installHermes.Visible = $wslOk -and (-not $hermesOk)
+  $installPython.Visible = -not $pythonOk
+
+  $parts = @(
+    "Codex: $(if ($codexOk) { 'installed' } else { 'missing' })",
+    "WSL Ubuntu: $(if ($wslOk) { 'installed' } else { 'missing' })",
+    "Hermes: $(if ($hermesOk) { 'installed' } else { 'missing' })",
+    "Python: $(if ($pythonOk) { 'installed' } else { 'missing' })"
+  )
+  $dependencySummary.Text = "First-run checks: " + ($parts -join "    |    ")
+  if ($codexOk -and $wslOk -and $hermesOk -and $pythonOk) {
+    $dependencySummary.Text += "`r`nReady: Asclepius can launch real Codex with the isolated Hermes profile."
+  } else {
+    $dependencySummary.Text += "`r`nInstall only the missing pieces, then refresh checks."
+  }
 }
 
 function Update-AuthSummary {
@@ -462,6 +610,11 @@ $hermesSessions.Add_Click({
     $status.Text = "Hermes session manager script not found: $script"
   }
 })
+$installCodex.Add_Click({ Start-DependencyInstall -Target "Codex" })
+$installWsl.Add_Click({ Start-DependencyInstall -Target "WslUbuntu" })
+$installHermes.Add_Click({ Start-DependencyInstall -Target "Hermes" })
+$installPython.Add_Click({ Start-DependencyInstall -Target "Python" })
+$refreshChecks.Add_Click({ Update-DependencyStatus })
 $launch.Add_Click({
   $m = Get-SelectedModel
   if ($m -and (Test-ModelCanRun -Model $m)) {
@@ -482,5 +635,11 @@ $smoke.Add_Click({
   }
 })
 
-$form.Add_Shown({ Populate-Models -ForceRefresh })
+Set-AsclepiusTheme -Control $form
+$title.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
+$authSummary.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+$form.Add_Shown({
+  Update-DependencyStatus
+  Populate-Models -ForceRefresh
+})
 [void]$form.ShowDialog()

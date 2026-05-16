@@ -86,9 +86,9 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $wsh = New-Object -ComObject WScript.Shell
 $shortcut = $wsh.CreateShortcut($DesktopShortcut)
 $shortcut.TargetPath = "wscript.exe"
-$shortcut.Arguments = "`"$Root\Launch-CloudCodexApp.vbs`""
+$shortcut.Arguments = "`"$Root\Launch-CloudCodexModelPicker.vbs`""
 $shortcut.WorkingDirectory = $Root
-$shortcut.Description = "Launch real Codex Desktop with the isolated Asclepius Hermes profile"
+$shortcut.Description = "Choose an Asclepius cloud model, then launch real Codex Desktop with the isolated Hermes profile"
 
 $codexExe = $null
 try {
@@ -111,6 +111,6 @@ try {
 Write-Output "Installed to $Root"
 Write-Output "Isolated CODEX_HOME: $CodexHome"
 Write-Output "Desktop shortcut: $DesktopShortcut"
-Write-Output "Shortcut launches real Codex Desktop through Launch-CloudCodexApp.vbs."
+Write-Output "Shortcut opens the Asclepius model/portal picker through Launch-CloudCodexModelPicker.vbs."
 Write-Output "Catalog auto-refresh: $refreshMode"
 Write-Output "No Codex binaries, credentials, logs, or Electron state were copied from this package."

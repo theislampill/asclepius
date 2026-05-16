@@ -73,7 +73,7 @@ function Test-Shortcut {
   $target = $shortcut.TargetPath
   Assert-True (Test-Path -LiteralPath $target) "Shortcut target does not exist: $target"
   Assert-True ($target -match 'wscript\.exe$') "Shortcut target is $target, not the safe VBS launcher host."
-  Assert-True ($shortcut.Arguments -like "*Launch-CloudCodexApp.vbs*") "Shortcut does not launch the real-Codex app VBS."
+  Assert-True ($shortcut.Arguments -like "*Launch-CloudCodexModelPicker.vbs*") "Shortcut does not launch the Asclepius model/portal picker VBS."
   Add-Check "desktop_shortcut" ("{0} {1}" -f $target, $shortcut.Arguments)
 }
 
@@ -108,7 +108,7 @@ function Test-Package {
     $archive.Dispose()
   }
 
-  foreach ($required in @("Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Test-Asclepius.ps1")) {
+  foreach ($required in @("Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Launch-CloudCodexModelPicker.ps1", "Launch-CloudCodexModelPicker.vbs", "Test-Asclepius.ps1")) {
     Assert-True ($entries -contains $required) "Package missing $required"
   }
 
