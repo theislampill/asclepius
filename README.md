@@ -65,8 +65,21 @@ belongs to Codex. This package does not modify or repackage Codex Desktop.
   behind explicit user action.
 - **Secret Egress Filter:** The supervisor redacts common token/key/cookie
   shapes before showing command output in the UI.
+- **SOLID:** Asclepius keeps separate responsibilities for app supervision,
+  model catalog loading, process launch, secret filtering, and smoke checks.
+  Provider/model sections are data-driven so adding a route should not require
+  renderer rewrites.
 - **Normal Form:** Workspace paths are canonicalized and converted to WSL paths
   before being handed to Hermes.
+- **E2E:** `Test-Asclepius.ps1` keeps the critical path small but meaningful:
+  syntax/build, installed app smoke, visible window identity, shortcut target,
+  default Codex profile observation, and package hygiene.
+- **WCAG / POUR:** The app uses high-contrast text, visible status text,
+  keyboard-operable buttons, accessible names on major controls, and smoke
+  assertions for contrast and basic operability metadata.
+- **PE:** First-run content works before services or catalogs are ready: the
+  app shows dependency status, install actions, and a safe fallback Nous route,
+  then progressively enables richer launch/model behavior as checks pass.
 
 Set `CODEX_CLOUD_RUNTIME_MODE=proxy` before starting the bridge to force the
 older raw model-proxy behavior for debugging.
@@ -97,6 +110,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Manage-AsclepiusHermes
 - Codex Desktop installed separately.
 - WSL Ubuntu with Hermes installed at `/home/agent/.local/bin/hermes`.
 - A Hermes Nous OAuth login for free Nous Portal models.
+
+If Codex, WSL Ubuntu, Hermes, or Python are missing, Asclepius shows first-run
+install buttons with progress logs instead of launching into a broken profile.
 
 ## Install
 
@@ -137,3 +153,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Package-CloudCodex.ps1
 ```
 
 The package contains git-tracked source files only.
+
+## Smoke
+
+To run the local verification harness:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Asclepius.ps1
+```
+
+Use `-SkipInstalled` for source/package-only checks before installation.

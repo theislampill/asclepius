@@ -8,6 +8,8 @@ $DesktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "asclepiu
 $required = @(
   "AsclepiusApp.cs",
   "Build-AsclepiusApp.ps1",
+  "Test-Asclepius.ps1",
+  "Install-AsclepiusDependency.ps1",
   "codex_nous_bridge.py",
   "Start-CodexNousCloudServices.ps1",
   "Refresh-NousCatalog.ps1",
