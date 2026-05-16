@@ -6,6 +6,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BridgePort = 8655
 $ProxyPort = 8645
+$Workspace = if ($env:CODEX_CLOUD_WORKSPACE) { $env:CODEX_CLOUD_WORKSPACE } else { "C:\workspace\ai" }
 $Logs = Join-Path $Root "logs"
 New-Item -ItemType Directory -Force -Path $Logs | Out-Null
 
@@ -17,6 +18,23 @@ function Test-JsonEndpoint {
   } catch {
     return $false
   }
+}
+
+function Get-JsonEndpoint {
+  param([string]$Uri)
+  try {
+    return Invoke-RestMethod -Uri $Uri -TimeoutSec 3
+  } catch {
+    return $null
+  }
+}
+
+function Stop-BridgeProcesses {
+  try {
+    Get-CimInstance Win32_Process |
+      Where-Object { $_.CommandLine -like "*codex_nous_bridge.py*" -and $_.Name -match "python" } |
+      ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+  } catch {}
 }
 
 function Find-Python {
@@ -46,11 +64,22 @@ if (-not (Test-JsonEndpoint "http://127.0.0.1:$ProxyPort/health")) {
   }
 }
 
-if (-not (Test-JsonEndpoint "http://127.0.0.1:$BridgePort/health")) {
+$bridgeHealth = Get-JsonEndpoint "http://127.0.0.1:$BridgePort/health"
+$bridgeReady = $false
+if ($bridgeHealth) {
+  $bridgeReady = ([string]$bridgeHealth.windows_workspace -eq [string]$Workspace)
+  if (-not $bridgeReady) {
+    Stop-BridgeProcesses
+    Start-Sleep -Milliseconds 500
+  }
+}
+
+if (-not $bridgeReady) {
   $python = Find-Python
   $bridge = Join-Path $Root "codex_nous_bridge.py"
   $out = Join-Path $Logs "codex-nous-bridge.out.log"
   $err = Join-Path $Logs "codex-nous-bridge.err.log"
+  $env:CODEX_CLOUD_WORKSPACE = $Workspace
   Start-Process -FilePath $python -ArgumentList @($bridge) -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err | Out-Null
   $ready = $false
   foreach ($i in 1..30) {

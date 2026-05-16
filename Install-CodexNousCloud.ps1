@@ -13,6 +13,8 @@ $required = @(
   "Launch-CloudCodexApp.vbs",
   "Launch-CloudCodexModelPicker.ps1",
   "Launch-CloudCodexModelPicker.vbs",
+  "Manage-AsclepiusHermesSessions.ps1",
+  "Update-HermesGolden.ps1",
   "Install-CloudCodexAutoRefresh.ps1",
   "Start-CloudCodexCatalogAutoRefresh.ps1",
   "Start-HermesNousOAuthLogin.ps1",
@@ -50,7 +52,7 @@ personality = "pragmatic"
 sandbox = "elevated"
 
 [model_providers.nous-cloud]
-name = "Nous Cloud via Hermes"
+name = "Asclepius: Nous | deepseek/deepseek-v4-flash"
 base_url = "http://127.0.0.1:8655/v1"
 experimental_bearer_token = "local-codex-nous-cloud"
 wire_api = "responses"

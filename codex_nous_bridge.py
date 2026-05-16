@@ -23,6 +23,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 
+def windows_path_to_wsl(path: str) -> str:
+    full = os.path.abspath(path)
+    drive, rest = os.path.splitdrive(full)
+    if not drive:
+        return full.replace("\\", "/")
+    drive_letter = drive.rstrip(":").lower()
+    rest_wsl = rest.replace("\\", "/")
+    return f"/mnt/{drive_letter}{rest_wsl}"
+
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 HOST = os.environ.get("CODEX_NOUS_BRIDGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CODEX_NOUS_BRIDGE_PORT", "8655"))
@@ -31,12 +41,16 @@ NOUS_DIRECT_BASE = os.environ.get("CODEX_NOUS_DIRECT_BASE", "https://inference-a
 OPENROUTER_BASE = os.environ.get("CODEX_OPENROUTER_BASE", "https://openrouter.ai/api/v1").rstrip("/")
 SECRETS_PATH = os.environ.get("CODEX_CLOUD_SECRETS_PATH", os.path.join(ROOT, "cloud-secrets.json"))
 CATALOG_PATH = os.environ.get("CODEX_CLOUD_MODELS_PATH", os.path.join(ROOT, "cloud-models.json"))
+STATE_PATH = os.environ.get("CODEX_CLOUD_STATE_PATH", os.path.join(ROOT, "bridge-state.json"))
 DEFAULT_MODEL = os.environ.get("CODEX_NOUS_DEFAULT_MODEL", "nous/deepseek/deepseek-v4-flash")
 RUNTIME_MODE = os.environ.get("CODEX_CLOUD_RUNTIME_MODE", "hermes_agent").strip().lower()
 HERMES_BIN = os.environ.get("CODEX_HERMES_BIN", "/home/agent/.local/bin/hermes")
 HERMES_WSL_DISTRO = os.environ.get("CODEX_HERMES_WSL_DISTRO", "Ubuntu")
-HERMES_WORKDIR = os.environ.get("CODEX_HERMES_WORKDIR", "/home/agent")
+WINDOWS_WORKSPACE = os.environ.get("CODEX_CLOUD_WORKSPACE", r"C:\workspace\ai")
+HERMES_WORKDIR = os.environ.get("CODEX_HERMES_WORKDIR", windows_path_to_wsl(WINDOWS_WORKSPACE))
 HERMES_TIMEOUT_SECONDS = int(os.environ.get("CODEX_HERMES_TIMEOUT_SECONDS", "600"))
+HERMES_HEARTBEAT_SECONDS = int(os.environ.get("CODEX_HERMES_HEARTBEAT_SECONDS", "15"))
+HERMES_MAX_TURNS = int(os.environ.get("CODEX_HERMES_MAX_TURNS", "45"))
 
 RESPONSES: dict[str, dict[str, Any]] = {}
 
@@ -71,6 +85,33 @@ def load_secrets() -> dict[str, Any]:
         return {}
 
 
+def load_state() -> None:
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        responses = data.get("responses") if isinstance(data, dict) else None
+        if isinstance(responses, dict):
+            for rid, stored in responses.items():
+                if isinstance(stored, dict) and isinstance(stored.get("response"), dict):
+                    RESPONSES[str(rid)] = stored
+    except FileNotFoundError:
+        return
+    except Exception:
+        return
+
+
+def save_state() -> None:
+    try:
+        trimmed = dict(list(RESPONSES.items())[-250:])
+        payload = {"updated_at": now(), "responses": trimmed}
+        tmp = f"{STATE_PATH}.tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False)
+        os.replace(tmp, STATE_PATH)
+    except Exception:
+        return
+
+
 def openrouter_key() -> str:
     key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if key:
@@ -89,16 +130,6 @@ def nous_key() -> str:
 
 def decode_route_model_id(value: str) -> str:
     return value.replace("__colon__", ":")
-
-
-def windows_path_to_wsl(path: str) -> str:
-    full = os.path.abspath(path)
-    drive, rest = os.path.splitdrive(full)
-    if not drive:
-        return full.replace("\\", "/")
-    drive_letter = drive.rstrip(":").lower()
-    rest_wsl = rest.replace("\\", "/")
-    return f"/mnt/{drive_letter}{rest_wsl}"
 
 
 def parse_model_route(model: str) -> dict[str, str]:
@@ -259,6 +290,60 @@ def responses_body_to_prompt(body: dict[str, Any]) -> str:
     return "\n\n".join(parts).strip() or "Continue."
 
 
+def codex_profile_config() -> dict[str, str]:
+    config_path = os.path.join(ROOT, "codex-home", "config.toml")
+    out: dict[str, str] = {}
+    try:
+        with open(config_path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+    except FileNotFoundError:
+        return out
+    for key in ("sandbox_mode", "approval_policy", "model_reasoning_effort"):
+        match = re.search(rf'(?m)^\s*{re.escape(key)}\s*=\s*"([^"]*)"', text)
+        if match:
+            out[key] = match.group(1)
+    return out
+
+
+def request_shape_summary(body: dict[str, Any]) -> str:
+    keys = sorted(str(key) for key in body.keys())
+    tool_count = len(body.get("tools") or []) if isinstance(body.get("tools"), list) else 0
+    prev = str(body.get("previous_response_id") or "")
+    store = body.get("store")
+    reasoning = body.get("reasoning")
+    bits = [f"request_keys={keys}", f"tool_count={tool_count}"]
+    if prev:
+        bits.append(f"previous_response_id={prev}")
+    if store is not None:
+        bits.append(f"store={store}")
+    if reasoning is not None:
+        bits.append(f"reasoning={reasoning}")
+    return "; ".join(bits)
+
+
+def runtime_capsule(body: dict[str, Any], route: dict[str, str]) -> str:
+    profile = codex_profile_config()
+    sandbox = profile.get("sandbox_mode", "unknown")
+    approval = profile.get("approval_policy", "unknown")
+    effort = profile.get("model_reasoning_effort", "unknown")
+    wsl_workspace = windows_path_to_wsl(WINDOWS_WORKSPACE)
+    return f"""Asclepius runtime capsule:
+- You are running under Cloud-Codex/Asclepius, an isolated Codex Desktop profile backed by Hermes Agent.
+- Active cloud route: provider={route["provider"]}; requested_model={route["requested_model"]}; upstream_model={route["upstream_model"]}.
+- Codex profile policy from config.toml: sandbox_mode={sandbox}; approval_policy={approval}; model_reasoning_effort={effort}.
+- Important boundary: the visible Codex Desktop sandbox dropdown does not enforce Hermes tool execution. Hermes tools run inside the Hermes/WSL runtime. Treat the Codex policy above as binding.
+- Host workspace: {WINDOWS_WORKSPACE}
+- WSL workspace: {wsl_workspace}
+- Hermes process working directory: {HERMES_WORKDIR}
+- Use Linux/bash commands and WSL paths for Hermes tools. Convert Windows paths like C:\\workspace\\ai\\x to /mnt/c/workspace/ai/x before calling terminal/read/write tools.
+- Do not use PowerShell cmdlets inside Hermes terminal unless you explicitly launch powershell.exe.
+- Keep file reads bounded. Prefer listing/searching first, then read small ranges. Avoid repeatedly reading large generated files.
+- If you need to alter files, keep edits inside the workspace unless the user explicitly asks otherwise.
+- Each Codex chat should map to its own Hermes session through previous_response_id. Do not assume one global conversation.
+- Bridge request shape: {request_shape_summary(body)}
+"""
+
+
 def strip_ansi(value: str) -> str:
     return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", value)
 
@@ -289,8 +374,8 @@ def parse_hermes_output(output: str) -> tuple[str, str | None]:
     return text, session_id
 
 
-def run_hermes_turn(route: dict[str, str], body: dict[str, Any]) -> tuple[str, str | None]:
-    prompt = responses_body_to_prompt(body)
+def run_hermes_turn(route: dict[str, str], body: dict[str, Any], heartbeat=None) -> tuple[str, str | None]:
+    prompt = f"{runtime_capsule(body, route)}\n\nUser/Codex request:\n{responses_body_to_prompt(body)}"
     prev = body.get("previous_response_id")
     resume_session = ""
     if prev and prev in RESPONSES:
@@ -312,7 +397,7 @@ model="$3"
 resume_session="${{4:-}}"
 prompt="$(cat "$prompt_file")"
 cd {hermes_workdir_q}
-args=({hermes_bin_q} chat -Q --source tool --provider "$provider" --model "$model" --query "$prompt")
+args=({hermes_bin_q} chat -Q --source asclepius --provider "$provider" --model "$model" --max-turns {HERMES_MAX_TURNS} --query "$prompt")
 if [ -n "$resume_session" ]; then
   args+=(--resume "$resume_session")
 fi
@@ -325,27 +410,55 @@ exec "${{args[@]}}"
     try:
         prompt_wsl = windows_path_to_wsl(prompt_path)
         script_wsl = windows_path_to_wsl(script_path)
-        completed = subprocess.run(
-            [
-                "wsl.exe",
-                "-d",
-                HERMES_WSL_DISTRO,
-                "--",
-                "bash",
-                script_wsl,
-                prompt_wsl,
-                provider,
-                upstream_model,
-                resume_session,
-            ],
-            cwd=ROOT,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=HERMES_TIMEOUT_SECONDS,
-        )
+        args = [
+            "wsl.exe",
+            "-d",
+            HERMES_WSL_DISTRO,
+            "--",
+            "bash",
+            script_wsl,
+            prompt_wsl,
+            provider,
+            upstream_model,
+            resume_session,
+        ]
+        if heartbeat is None:
+            completed = subprocess.run(
+                args,
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=HERMES_TIMEOUT_SECONDS,
+            )
+        else:
+            proc = subprocess.Popen(
+                args,
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            deadline = time.monotonic() + HERMES_TIMEOUT_SECONDS
+            while True:
+                try:
+                    stdout, _ = proc.communicate(timeout=HERMES_HEARTBEAT_SECONDS)
+                    completed = subprocess.CompletedProcess(args, proc.returncode, stdout or "", None)
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() >= deadline:
+                        proc.kill()
+                        stdout, _ = proc.communicate()
+                        raise BridgeError(
+                            f"Hermes timed out after {HERMES_TIMEOUT_SECONDS} seconds.\n{stdout or ''}",
+                            504,
+                            "hermes_timeout",
+                        )
+                    heartbeat()
     finally:
         try:
             os.unlink(prompt_path)
@@ -461,6 +574,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "runtime_mode": RUNTIME_MODE,
                 "hermes_bin": HERMES_BIN,
                 "hermes_wsl_distro": HERMES_WSL_DISTRO,
+                "hermes_workdir": HERMES_WORKDIR,
+                "windows_workspace": WINDOWS_WORKSPACE,
+                "hermes_max_turns": HERMES_MAX_TURNS,
+                "tracked_responses": len(RESPONSES),
+                "session_mapping": "bridge-state.json maps Codex response ids to Hermes session ids; current Hermes may still record source as cli",
                 "providers": {
                     "nous": {
                         "ready": True,
@@ -515,6 +633,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/v1/responses/"):
             rid = self.path.rsplit("/", 1)[-1]
             RESPONSES.pop(rid, None)
+            save_state()
             write_json(self, {"id": rid, "deleted": True, "object": "response.deleted"})
             return
         write_json(self, {"error": {"message": "not found"}}, HTTPStatus.NOT_FOUND)
@@ -594,6 +713,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             "chat_history": [],
             "hermes_session_id": hermes_session_id,
         }
+        save_state()
         write_json(self, response)
 
     def handle_hermes_streaming(self, body: dict[str, Any], route: dict[str, str]) -> None:
@@ -611,6 +731,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.wfile.write(sse_payload(event, data, seq))
             self.wfile.flush()
             seq += 1
+
+        def emit_comment(text: str) -> None:
+            self.wfile.write(f": {text}\n\n".encode("utf-8"))
+            self.wfile.flush()
 
         def envelope(status: str, output: list[dict[str, Any]] | None = None) -> dict[str, Any]:
             return {
@@ -642,7 +766,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         })
 
         try:
-            text, hermes_session_id = run_hermes_turn(route, body)
+            text, hermes_session_id = run_hermes_turn(route, body, heartbeat=lambda: emit_comment("asclepius: hermes agent still running"))
         except BridgeError as exc:
             failed = envelope("failed")
             failed["error"] = {"message": str(exc), "type": exc.typ}
@@ -689,6 +813,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             "chat_history": [],
             "hermes_session_id": hermes_session_id,
         }
+        save_state()
         emit("response.completed", {"type": "response.completed", "response": completed})
 
     def handle_non_streaming(
@@ -733,6 +858,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if msg.get("tool_calls"):
             assistant_msg["tool_calls"] = msg["tool_calls"]
         RESPONSES[rid] = {"response": response, "chat_history": messages + [assistant_msg]}
+        save_state()
         write_json(self, response)
 
     def handle_streaming(
@@ -890,10 +1016,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if tool_calls:
             assistant_msg["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
         RESPONSES[rid] = {"response": completed, "chat_history": messages + [assistant_msg]}
+        save_state()
         emit("response.completed", {"type": "response.completed", "response": completed})
 
 
 def main() -> None:
+    load_state()
     server = ThreadingHTTPServer((HOST, PORT), BridgeHandler)
     print(
         f"Codex cloud bridge listening on http://{HOST}:{PORT}/v1 "

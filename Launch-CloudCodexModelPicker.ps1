@@ -180,7 +180,7 @@ $script:AllModels = @()
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Cloud-Codex"
-$form.Size = New-Object System.Drawing.Size(820, 480)
+$form.Size = New-Object System.Drawing.Size(900, 540)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
@@ -194,7 +194,7 @@ $form.Controls.Add($title)
 
 $filter = New-Object System.Windows.Forms.TextBox
 $filter.Location = New-Object System.Drawing.Point(18, 50)
-$filter.Size = New-Object System.Drawing.Size(770, 26)
+$filter.Size = New-Object System.Drawing.Size(850, 26)
 if ($filter.PSObject.Properties.Name -contains "PlaceholderText") {
   $filter.PlaceholderText = "Filter by portal, model, free, paid, deepseek, stepfun..."
 }
@@ -202,7 +202,7 @@ $form.Controls.Add($filter)
 
 $combo = New-Object System.Windows.Forms.ComboBox
 $combo.Location = New-Object System.Drawing.Point(18, 84)
-$combo.Size = New-Object System.Drawing.Size(770, 28)
+$combo.Size = New-Object System.Drawing.Size(850, 28)
 $combo.DropDownStyle = "DropDownList"
 $combo.DisplayMember = "display"
 $form.Controls.Add($combo)
@@ -210,20 +210,20 @@ $form.Controls.Add($combo)
 $details = New-Object System.Windows.Forms.Label
 $details.Text = "Loading cloud catalog..."
 $details.Location = New-Object System.Drawing.Point(18, 122)
-$details.Size = New-Object System.Drawing.Size(770, 90)
+$details.Size = New-Object System.Drawing.Size(850, 90)
 $form.Controls.Add($details)
 
 $authSummary = New-Object System.Windows.Forms.Label
 $authSummary.Text = "Checking provider auth..."
 $authSummary.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
 $authSummary.Location = New-Object System.Drawing.Point(18, 220)
-$authSummary.Size = New-Object System.Drawing.Size(770, 28)
+$authSummary.Size = New-Object System.Drawing.Size(850, 28)
 $form.Controls.Add($authSummary)
 
 $status = New-Object System.Windows.Forms.Label
 $status.Text = ""
 $status.Location = New-Object System.Drawing.Point(18, 250)
-$status.Size = New-Object System.Drawing.Size(770, 34)
+$status.Size = New-Object System.Drawing.Size(850, 34)
 $form.Controls.Add($status)
 
 $launch = New-Object System.Windows.Forms.Button
@@ -275,6 +275,18 @@ $clearOpenRouterKey.Text = "Clear OpenRouter"
 $clearOpenRouterKey.Location = New-Object System.Drawing.Point(192, 348)
 $clearOpenRouterKey.Size = New-Object System.Drawing.Size(140, 34)
 $form.Controls.Add($clearOpenRouterKey)
+
+$hermesUpdate = New-Object System.Windows.Forms.Button
+$hermesUpdate.Text = "Hermes Golden Update"
+$hermesUpdate.Location = New-Object System.Drawing.Point(346, 348)
+$hermesUpdate.Size = New-Object System.Drawing.Size(170, 34)
+$form.Controls.Add($hermesUpdate)
+
+$hermesSessions = New-Object System.Windows.Forms.Button
+$hermesSessions.Text = "Hermes Sessions"
+$hermesSessions.Location = New-Object System.Drawing.Point(530, 348)
+$hermesSessions.Size = New-Object System.Drawing.Size(140, 34)
+$form.Controls.Add($hermesSessions)
 
 function Get-SelectedModel {
   if (-not $combo.SelectedItem) { return $null }
@@ -423,6 +435,32 @@ $clearOpenRouterKey.Add_Click({
   Populate-Models -ForceRefresh
   Update-AuthSummary
   $status.Text = "OpenRouter key cleared from Cloud-Codex secrets."
+})
+$hermesUpdate.Add_Click({
+  $script = Join-Path $Root "Update-HermesGolden.ps1"
+  if (Test-Path -LiteralPath $script) {
+    Start-Process -FilePath "powershell.exe" -ArgumentList @(
+      "-NoProfile",
+      "-ExecutionPolicy", "Bypass",
+      "-File", $script
+    ) -WorkingDirectory $Root | Out-Null
+    $status.Text = "Hermes Golden update window opened. Codex's blue Update remains Codex-only."
+  } else {
+    $status.Text = "Hermes Golden update script not found: $script"
+  }
+})
+$hermesSessions.Add_Click({
+  $script = Join-Path $Root "Manage-AsclepiusHermesSessions.ps1"
+  if (Test-Path -LiteralPath $script) {
+    Start-Process -FilePath "powershell.exe" -ArgumentList @(
+      "-NoProfile",
+      "-ExecutionPolicy", "Bypass",
+      "-File", $script
+    ) -WorkingDirectory $Root | Out-Null
+    $status.Text = "Hermes session manager opened."
+  } else {
+    $status.Text = "Hermes session manager script not found: $script"
+  }
 })
 $launch.Add_Click({
   $m = Get-SelectedModel

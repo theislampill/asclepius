@@ -5,6 +5,8 @@ logs/
 dist/
 __pycache__/
 *.pyc
+bridge-state.json
+bridge-state.json.tmp
 
 # Local credentials and auth material
 cloud-secrets.json
