@@ -57,6 +57,11 @@ Asclepius owns no chat window and does not draw a picker over Codex. Codex
 starts only after a route is selected. The visible work app is Codex Desktop.
 This package does not modify, embed, or repackage Codex Desktop.
 
+When Codex launches through Asclepius, a hidden window-identity watcher targets
+only the fresh Codex PID/HWND created by that launch. It keeps the window title
+and AppUserModelID set to Asclepius, because Codex may reset its own title after
+project or chat state changes.
+
 ## Design Discipline
 
 - **12FA:** Codex and Hermes are explicit external dependencies; runtime config
@@ -81,7 +86,7 @@ This package does not modify, embed, or repackage Codex Desktop.
   before being handed to Hermes.
 - **E2E:** `Test-Asclepius.ps1` keeps the critical path small but meaningful:
   syntax checks, real-Codex launcher dry-run, shortcut target, default Codex
-  profile observation, and package hygiene.
+  profile observation, window identity repair, and package hygiene.
 - **WCAG / POUR / PE:** The normal user-facing UI is Codex Desktop itself. Any
   Asclepius surface is reserved for supervisor-only needs.
 

@@ -13,6 +13,7 @@ $ElectronUserData = Join-Path $Root "electron-user-data"
 $CloudModelsPath = Join-Path $Root "cloud-models.json"
 $InstructionsPath = Join-Path $Root "cloud-codex-instructions.md"
 $WindowIdentityProbe = Join-Path $Root "Test-AsclepiusWindowIdentity.ps1"
+$WindowIdentityWatcher = Join-Path $Root "Start-AsclepiusWindowIdentityWatcher.ps1"
 $AppUserModelId = "NousResearch.Asclepius.Codex"
 $WindowTitle = "Asclepius"
 
@@ -223,6 +224,7 @@ $launchInfo = [PSCustomObject]@{
   AuthMode = $AuthMode
   AppUserModelId = $AppUserModelId
   WindowTitle = $WindowTitle
+  WindowIdentityWatcher = $WindowIdentityWatcher
 }
 
 if ($HostInfoJson) {
@@ -238,21 +240,32 @@ if ($DryRun) {
 $before = @(Get-CodexProcessSnapshot)
 $started = Start-Process -FilePath $CodexDesktopExe -ArgumentList @("--open-project", $Workspace) -WorkingDirectory $Workspace -PassThru
 
-if (-not $NoWindowIdentity -and (Test-Path -LiteralPath $WindowIdentityProbe)) {
+if (-not $NoWindowIdentity) {
   $target = Wait-ForFreshCodexWindow -Before $before -Deadline (Get-Date).AddSeconds(60)
   if ($target) {
-    & $WindowIdentityProbe `
-      -TargetProcessId $target.Id `
-      -AllowCodexTarget `
-      -AppUserModelId $AppUserModelId `
-      -WindowTitle $WindowTitle `
-      -KeepOpenSeconds 0 | Out-Null
-    Start-Sleep -Milliseconds 1200
-    & $WindowIdentityProbe `
-      -TargetProcessId $target.Id `
-      -AllowCodexTarget `
-      -AppUserModelId $AppUserModelId `
-      -WindowTitle $WindowTitle `
-      -KeepOpenSeconds 0 | Out-Null
+    if (Test-Path -LiteralPath $WindowIdentityWatcher) {
+      & $WindowIdentityWatcher `
+        -TargetProcessId $target.Id `
+        -AppUserModelId $AppUserModelId `
+        -WindowTitle $WindowTitle `
+        -Once | Out-Null
+      Start-Process -FilePath "powershell.exe" -ArgumentList @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-WindowStyle", "Hidden",
+        "-File", $WindowIdentityWatcher,
+        "-TargetProcessId", ([string]$target.Id),
+        "-AppUserModelId", $AppUserModelId,
+        "-WindowTitle", $WindowTitle,
+        "-IntervalMilliseconds", "750"
+      ) -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
+    } elseif (Test-Path -LiteralPath $WindowIdentityProbe) {
+      & $WindowIdentityProbe `
+        -TargetProcessId $target.Id `
+        -AllowCodexTarget `
+        -AppUserModelId $AppUserModelId `
+        -WindowTitle $WindowTitle `
+        -KeepOpenSeconds 0 | Out-Null
+    }
   }
 }

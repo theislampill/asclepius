@@ -54,6 +54,17 @@ function Test-WindowIdentityProbe {
   Add-Check "window_identity_probe" ("{0} {1}" -f $row.hwnd, $row.app_user_model_id_after)
 }
 
+function Test-WindowIdentityWatcher {
+  $watcher = Join-Path $Root "Start-AsclepiusWindowIdentityWatcher.ps1"
+  Assert-True (Test-Path -LiteralPath $watcher) "Window identity watcher script not found: $watcher"
+  $result = & $watcher -SelfTest
+  $row = @($result | Where-Object { $_ -is [pscustomobject] } | Select-Object -First 1)[0]
+  Assert-True ($null -ne $row) "Window identity watcher did not return a structured self-test result."
+  Assert-True ($row.ok -eq $true) "Window identity watcher did not repair the disposable window title/AppUserModelID."
+  Assert-True ($row.touched_codex -eq $false) "Window identity watcher self-test unexpectedly touched Codex."
+  Add-Check "window_identity_watcher" ("{0} {1}" -f $row.repaired_title_after, $row.app_user_model_id_after)
+}
+
 function Test-InstalledLauncher {
   if ($SkipInstalled) {
     Add-Check "installed_launcher" "skipped"
@@ -120,7 +131,7 @@ function Test-Package {
     $archive.Dispose()
   }
 
-  foreach ($required in @("Launch-AsclepiusProviderLauncher.ps1", "Launch-AsclepiusProviderLauncher.vbs", "Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Launch-CloudCodexModelPicker.ps1", "Launch-CloudCodexModelPicker.vbs", "Test-Asclepius.ps1", "Test-AsclepiusWindowIdentity.ps1", "Start-AsclepiusCodexIdentitySmoke.ps1")) {
+  foreach ($required in @("Launch-AsclepiusProviderLauncher.ps1", "Launch-AsclepiusProviderLauncher.vbs", "Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Launch-CloudCodexModelPicker.ps1", "Launch-CloudCodexModelPicker.vbs", "Test-Asclepius.ps1", "Test-AsclepiusWindowIdentity.ps1", "Start-AsclepiusWindowIdentityWatcher.ps1", "Start-AsclepiusCodexIdentitySmoke.ps1")) {
     Assert-True ($entries -contains $required) "Package missing $required"
   }
 
@@ -199,6 +210,7 @@ function Test-SecretEgress {
 Test-PowerShellSyntax
 Test-PythonBridge
 Test-WindowIdentityProbe
+Test-WindowIdentityWatcher
 Test-InstalledLauncher
 Test-Shortcut
 Test-DefaultCodexUntouched

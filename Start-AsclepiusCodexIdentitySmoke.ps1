@@ -3,12 +3,14 @@ param(
   [string]$Workspace = "C:\workspace\ai",
   [string]$AppUserModelId = "NousResearch.Asclepius.Codex",
   [string]$WindowTitle = "Asclepius",
-  [int]$TimeoutSeconds = 60
+  [int]$TimeoutSeconds = 60,
+  [switch]$CloseWhenDone
 )
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProbeScript = Join-Path $Root "Test-AsclepiusWindowIdentity.ps1"
+$WatcherScript = Join-Path $Root "Start-AsclepiusWindowIdentityWatcher.ps1"
 
 function Get-CodexProcessSnapshot {
   $rows = @()
@@ -151,6 +153,9 @@ function Wait-ForFreshCodexWindow {
 if (-not (Test-Path -LiteralPath $ProbeScript)) {
   throw "Window identity probe script not found: $ProbeScript"
 }
+if (-not (Test-Path -LiteralPath $WatcherScript)) {
+  throw "Window identity watcher script not found: $WatcherScript"
+}
 
 $before = @(Get-CodexProcessSnapshot)
 $codexExe = Find-CodexDesktopExe
@@ -187,6 +192,30 @@ if (-not $target) {
   exit 2
 }
 
+$watcherOnce = & $WatcherScript `
+  -TargetProcessId $target.Id `
+  -AppUserModelId $AppUserModelId `
+  -WindowTitle $WindowTitle `
+  -Once
+
+$watcherRow = @($watcherOnce | Where-Object { $_ -is [pscustomobject] } | Select-Object -First 1)[0]
+if (-not $watcherRow) {
+  throw "Window identity watcher did not return a structured result."
+}
+
+$watcher = Start-Process -FilePath "powershell.exe" -ArgumentList @(
+  "-NoProfile",
+  "-ExecutionPolicy", "Bypass",
+  "-WindowStyle", "Hidden",
+  "-File", $WatcherScript,
+  "-TargetProcessId", ([string]$target.Id),
+  "-AppUserModelId", $AppUserModelId,
+  "-WindowTitle", $WindowTitle,
+  "-IntervalMilliseconds", "750",
+  "-MaxSeconds", "30"
+) -WorkingDirectory $Root -WindowStyle Hidden -PassThru
+
+Start-Sleep -Seconds 3
 $probeResult = & $ProbeScript `
   -TargetProcessId $target.Id `
   -AllowCodexTarget `
@@ -198,10 +227,8 @@ $probeRow = @($probeResult | Where-Object { $_ -is [pscustomobject] } | Select-O
 if (-not $probeRow) {
   throw "Window identity probe did not return a structured result."
 }
-
 $afterTarget = Get-Process -Id $target.Id -ErrorAction Stop
-
-[pscustomobject]@{
+$result = [pscustomobject]@{
   ok = ($probeRow.ok -eq $true)
   touched_existing_codex = $false
   started_process_id = $started.Id
@@ -213,6 +240,21 @@ $afterTarget = Get-Process -Id $target.Id -ErrorAction Stop
   app_user_model_id_before = $probeRow.app_user_model_id_before
   app_user_model_id_after = $probeRow.app_user_model_id_after
   dark_titlebar = $probeRow.dark_titlebar
+  watcher_process_id = $watcher.Id
+  watcher_once_ok = $watcherRow.ok
   temp_root = $tempRoot
   note = "Only a Codex PID/HWND absent from the pre-launch snapshot was modified. Existing Codex windows were not targeted."
 }
+
+if ($CloseWhenDone) {
+  $p = Get-Process -Id $target.Id -ErrorAction SilentlyContinue
+  if ($p) {
+    $null = $p.CloseMainWindow()
+    Start-Sleep -Milliseconds 800
+    if (-not $p.HasExited) {
+      Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
+$result

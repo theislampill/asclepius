@@ -276,9 +276,10 @@ function Test-ModelCanRun {
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Asclepius" Width="920" Height="620" MinWidth="760" MinHeight="560"
+        Title="Asclepius" Width="980" Height="640" MinWidth="820" MinHeight="560"
         WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="CanResizeWithGrip"
-        Background="#111111" FontFamily="Segoe UI">
+        Background="#111111" FontFamily="Segoe UI" UseLayoutRounding="True" SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display">
   <Window.Resources>
     <Style x:Key="NavText" TargetType="TextBlock">
       <Setter Property="Foreground" Value="#F2F2F2"/>
@@ -290,22 +291,41 @@ function Test-ModelCanRun {
       <Setter Property="FontSize" Value="13"/>
     </Style>
     <Style x:Key="PillButton" TargetType="Button">
-      <Setter Property="Height" Value="38"/>
-      <Setter Property="Padding" Value="18,0"/>
+      <Setter Property="Height" Value="34"/>
+      <Setter Property="Padding" Value="14,0"/>
       <Setter Property="Foreground" Value="#F4F4F4"/>
-      <Setter Property="Background" Value="#303030"/>
+      <Setter Property="Background" Value="#2F2F2F"/>
       <Setter Property="BorderBrush" Value="#444444"/>
       <Setter Property="BorderThickness" Value="1"/>
-      <Setter Property="FontSize" Value="14"/>
+      <Setter Property="FontSize" Value="13"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="10">
+            <Border x:Name="ButtonBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="9">
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ButtonBorder" Property="Background" Value="#383838"/>
+                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#5A5A5A"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="ButtonBorder" Property="Background" Value="#252525"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
       </Setter>
+    </Style>
+    <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource PillButton}">
+      <Setter Property="Background" Value="#EFEFEF"/>
+      <Setter Property="BorderBrush" Value="#EFEFEF"/>
+      <Setter Property="Foreground" Value="#141414"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Padding" Value="18,0"/>
     </Style>
     <Style x:Key="TitleButton" TargetType="Button">
       <Setter Property="Width" Value="46"/>
@@ -314,6 +334,23 @@ function Test-ModelCanRun {
       <Setter Property="Background" Value="Transparent"/>
       <Setter Property="BorderThickness" Value="0"/>
       <Setter Property="FontSize" Value="14"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="TitleButtonBorder" Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="TitleButtonBorder" Property="Background" Value="#272727"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="TitleButtonBorder" Property="Background" Value="#333333"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
     <Style x:Key="DarkTextBox" TargetType="TextBox">
       <Setter Property="Background" Value="#2D2D2D"/>
@@ -420,7 +457,7 @@ function Test-ModelCanRun {
         <RowDefinition Height="*"/>
       </Grid.RowDefinitions>
 
-      <Border Name="TitleBar" Grid.Row="0" Background="#111111" BorderBrush="#2A2A2A" BorderThickness="0,0,0,1">
+      <Border Name="TitleBar" Grid.Row="0" Background="#111111" BorderBrush="#262626" BorderThickness="0,0,0,1">
         <DockPanel LastChildFill="True">
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
             <Button Name="MinimizeButton" Style="{StaticResource TitleButton}" Content="-"/>
@@ -428,7 +465,7 @@ function Test-ModelCanRun {
             <Button Name="CloseButton" Style="{StaticResource TitleButton}" Content="X"/>
           </StackPanel>
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <Border Width="18" Height="18" CornerRadius="5" Background="#4B7DFF" Margin="14,0,14,0"/>
+            <Border Width="18" Height="18" CornerRadius="6" Background="#426DFF" Margin="14,0,14,0"/>
             <TextBlock Text="File" Foreground="#BDBDBD" FontSize="14" Margin="0,0,24,0"/>
             <TextBlock Text="Edit" Foreground="#BDBDBD" FontSize="14" Margin="0,0,24,0"/>
             <TextBlock Text="View" Foreground="#BDBDBD" FontSize="14" Margin="0,0,24,0"/>
@@ -438,7 +475,7 @@ function Test-ModelCanRun {
         </DockPanel>
       </Border>
 
-      <Grid Grid.Row="1" Background="#141414" Margin="34">
+      <Grid Grid.Row="1" Background="#141414" Margin="38">
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/>
@@ -450,12 +487,12 @@ function Test-ModelCanRun {
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
             <Button Name="RefreshButton" Style="{StaticResource PillButton}" Content="Refresh" Margin="0,0,8,0"/>
             <Button Name="OAuthButton" Style="{StaticResource PillButton}" Content="Nous OAuth" Margin="0,0,8,0"/>
-            <Button Name="HermesUpdateButton" Style="{StaticResource PillButton}" Content="Hermes update" Margin="0,0,8,0"/>
+            <Button Name="HermesUpdateButton" Style="{StaticResource PillButton}" Content="Hermes" Margin="0,0,8,0"/>
             <Button Name="SessionsButton" Style="{StaticResource PillButton}" Content="Sessions"/>
           </StackPanel>
           <StackPanel>
-            <TextBlock Text="Asclepius" Foreground="#F4F4F4" FontWeight="SemiBold" FontSize="18"/>
-            <TextBlock Text="Select a cloud route before Codex opens." Foreground="#9D9D9D" FontSize="13" Margin="0,8,0,0"/>
+            <TextBlock Text="Asclepius" Foreground="#F4F4F4" FontWeight="SemiBold" FontSize="20"/>
+            <TextBlock Text="Provider route" Foreground="#9D9D9D" FontSize="13" Margin="0,8,0,0"/>
           </StackPanel>
         </DockPanel>
 
@@ -476,27 +513,32 @@ function Test-ModelCanRun {
 
           <TextBlock Name="StatusBlock" Grid.Row="0" Foreground="#A6A6A6" FontSize="13" Margin="0,0,0,14" Text="Starting Asclepius..."/>
 
-          <Border Grid.Row="1" Background="#2D2D2D" BorderBrush="#414141" BorderThickness="1" CornerRadius="18" Padding="16">
+          <Border Grid.Row="1" Background="#2B2B2B" BorderBrush="#414141" BorderThickness="1" CornerRadius="16" Padding="16">
             <Grid>
               <Grid.RowDefinitions>
-                <RowDefinition Height="40"/>
-                <RowDefinition Height="52"/>
+                <RowDefinition Height="24"/>
+                <RowDefinition Height="42"/>
+                <RowDefinition Height="12"/>
+                <RowDefinition Height="42"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="46"/>
               </Grid.RowDefinitions>
-              <TextBox Name="FilterBox" Grid.Row="0" Style="{StaticResource DarkTextBox}" Text=""/>
-              <ComboBox Name="RouteCombo" Grid.Row="1" Height="38" Style="{StaticResource DarkComboBox}">
+              <TextBlock Grid.Row="0" Text="Search" Foreground="#A6A6A6" FontSize="12" VerticalAlignment="Top"/>
+              <Border Grid.Row="1" Background="#202020" BorderBrush="#3E3E3E" BorderThickness="1" CornerRadius="9">
+                <TextBox Name="FilterBox" Margin="12,0" Style="{StaticResource DarkTextBox}" Text=""/>
+              </Border>
+              <ComboBox Name="RouteCombo" Grid.Row="3" Height="38" Style="{StaticResource DarkComboBox}">
                 <ComboBox.ItemTemplate>
                   <DataTemplate>
                     <TextBlock Text="{Binding pickerDisplay}" Foreground="#F4F4F4" TextTrimming="CharacterEllipsis"/>
                   </DataTemplate>
                 </ComboBox.ItemTemplate>
               </ComboBox>
-              <StackPanel Grid.Row="2" Margin="0,8,0,12">
+              <StackPanel Grid.Row="4" Margin="0,10,0,12">
                 <TextBlock Name="RouteSummary" Text="Loading cloud routes..." Foreground="#B0B0B0" FontSize="13" TextTrimming="CharacterEllipsis"/>
                 <TextBlock Name="AuthBlock" Foreground="#929292" FontSize="12" Margin="0,6,0,0" TextTrimming="CharacterEllipsis"/>
               </StackPanel>
-              <Grid Grid.Row="3">
+              <Grid Grid.Row="5">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="Auto"/>
                   <ColumnDefinition Width="Auto"/>
@@ -507,7 +549,7 @@ function Test-ModelCanRun {
                 <Button Grid.Column="0" Style="{StaticResource PillButton}" Content="Default permissions" Margin="0,0,10,0"/>
                 <Button Grid.Column="1" Style="{StaticResource PillButton}" Content="Work locally" Margin="0,0,10,0"/>
                 <Button Grid.Column="3" Style="{StaticResource PillButton}" Content="Custom Medium" Margin="0,0,10,0"/>
-                <Button Name="LaunchButton" Grid.Column="4" Style="{StaticResource PillButton}" Content="Launch Codex" Background="#E8E8E8" Foreground="#171717"/>
+                <Button Name="LaunchButton" Grid.Column="4" Style="{StaticResource PrimaryButton}" Content="Launch Codex"/>
               </Grid>
             </Grid>
           </Border>
