@@ -9,6 +9,7 @@ bridge-state.json
 bridge-state.json.tmp
 asclepius-smoke.json
 asclepius-window-smoke.json
+asclepius-host-smoke.json
 Asclepius.exe
 
 # Local credentials and auth material

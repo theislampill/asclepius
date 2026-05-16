@@ -42,6 +42,12 @@ function Test-PythonBridge {
   Add-Check "python_bridge"
 }
 
+function Test-HostBuild {
+  & (Join-Path $Root "Build-AsclepiusHost.ps1") | Out-Null
+  Assert-True (Test-Path -LiteralPath (Join-Path $Root "Asclepius.exe")) "Source Asclepius host was not built."
+  Add-Check "host_build"
+}
+
 function Test-InstalledLauncher {
   if ($SkipInstalled) {
     Add-Check "installed_launcher" "skipped"
@@ -50,7 +56,21 @@ function Test-InstalledLauncher {
 
   $script = Join-Path $InstalledRoot "Launch-CloudCodexApp.ps1"
   Assert-True (Test-Path -LiteralPath $script) "Installed real-Codex launcher not found: $script"
-  Assert-True (-not (Test-Path -LiteralPath (Join-Path $InstalledRoot "Asclepius.exe"))) "Installed root still contains legacy Asclepius.exe."
+  $hostExe = Join-Path $InstalledRoot "Asclepius.exe"
+  Assert-True (Test-Path -LiteralPath $hostExe) "Installed Asclepius host not found: $hostExe"
+  $hostSmokePath = Join-Path $InstalledRoot "asclepius-host-smoke.json"
+  Remove-Item -LiteralPath $hostSmokePath -Force -ErrorAction SilentlyContinue
+  $hostProcess = Start-Process -FilePath $hostExe -ArgumentList "--host-smoke" -WorkingDirectory $InstalledRoot -PassThru
+  if (-not $hostProcess.WaitForExit(60000)) {
+    try { $hostProcess.Kill() } catch {}
+    throw "Asclepius host smoke timed out."
+  }
+  Assert-True (Test-Path -LiteralPath $hostSmokePath) "Asclepius host smoke did not write its smoke file."
+  $hostSmoke = Get-Content -LiteralPath $hostSmokePath -Raw | ConvertFrom-Json
+  Assert-True ($hostSmoke.supervisor_mode -eq "host_real_codex") "Host smoke did not report real-Codex hosting mode."
+  Assert-True (-not [bool]$hostSmoke.shows_fake_codex_ui) "Host smoke says it shows fake Codex UI."
+  Assert-True ([bool]$hostSmoke.sessions_script_present) "Host smoke did not find Hermes Sessions script."
+  Assert-True ([bool]$hostSmoke.tray_supervisor_menu) "Host smoke did not report tray supervisor menu."
   $dryRun = & $script -DryRun
   if ($LASTEXITCODE -ne 0) {
     throw "Real-Codex launcher dry-run failed."
@@ -72,8 +92,7 @@ function Test-Shortcut {
   $shortcut = $wsh.CreateShortcut($shortcutPath)
   $target = $shortcut.TargetPath
   Assert-True (Test-Path -LiteralPath $target) "Shortcut target does not exist: $target"
-  Assert-True ($target -match 'wscript\.exe$') "Shortcut target is $target, not the VBS launcher host."
-  Assert-True ($shortcut.Arguments -like "*Launch-CloudCodexApp.vbs*") "Shortcut does not launch the real-Codex app VBS."
+  Assert-True ($target -ieq (Join-Path $InstalledRoot "Asclepius.exe")) "Shortcut target is $target, not the Asclepius host."
   Add-Check "desktop_shortcut" ("{0} {1}" -f $target, $shortcut.Arguments)
 }
 
@@ -108,7 +127,7 @@ function Test-Package {
     $archive.Dispose()
   }
 
-  foreach ($required in @("Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Test-Asclepius.ps1")) {
+  foreach ($required in @("AsclepiusHost.cs", "Build-AsclepiusHost.ps1", "Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Test-Asclepius.ps1")) {
     Assert-True ($entries -contains $required) "Package missing $required"
   }
 
@@ -131,6 +150,7 @@ function Test-Package {
 
 Test-PowerShellSyntax
 Test-PythonBridge
+Test-HostBuild
 Test-InstalledLauncher
 Test-Shortcut
 Test-DefaultCodexUntouched

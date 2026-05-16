@@ -1,7 +1,8 @@
 param(
   [string]$Model,
   [string]$Workspace = "C:\workspace\ai",
-  [switch]$DryRun
+  [switch]$DryRun,
+  [switch]$HostInfoJson
 )
 
 $ErrorActionPreference = "Stop"
@@ -143,15 +144,23 @@ if ($CodexCli) {
   $env:CODEX_CLI_PATH = $CodexCli
 }
 
+$launchInfo = [PSCustomObject]@{
+  CodexDesktopExe = $CodexDesktopExe
+  CodexHome = $CodexHome
+  ElectronUserData = $ElectronUserData
+  Workspace = $Workspace
+  CodexCliPath = $CodexCli
+  SelectedModel = $ResolvedModel
+  HermesWorkdir = ConvertTo-WslPath -Path $Workspace
+}
+
+if ($HostInfoJson) {
+  $launchInfo | ConvertTo-Json -Compress
+  exit 0
+}
+
 if ($DryRun) {
-  [PSCustomObject]@{
-    CodexDesktopExe = $CodexDesktopExe
-    CodexHome = $CodexHome
-    ElectronUserData = $ElectronUserData
-    Workspace = $Workspace
-    CodexCliPath = $CodexCli
-    SelectedModel = $ResolvedModel
-  }
+  $launchInfo
   exit 0
 }
 
