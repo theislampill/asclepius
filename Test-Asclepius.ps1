@@ -119,7 +119,7 @@ function Test-Package {
     $archive.Dispose()
   }
 
-  foreach ($required in @("Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Launch-CloudCodexModelPicker.ps1", "Launch-CloudCodexModelPicker.vbs", "Test-Asclepius.ps1", "Test-AsclepiusWindowIdentity.ps1")) {
+  foreach ($required in @("Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Launch-CloudCodexModelPicker.ps1", "Launch-CloudCodexModelPicker.vbs", "Test-Asclepius.ps1", "Test-AsclepiusWindowIdentity.ps1", "Start-AsclepiusCodexIdentitySmoke.ps1")) {
     Assert-True ($entries -contains $required) "Package missing $required"
   }
 

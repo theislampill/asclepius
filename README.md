@@ -166,3 +166,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Asclepius.ps1
 ```
 
 Use `-SkipInstalled` for source/package-only checks before installation.
+
+To run the opt-in identity smoke that opens a fresh isolated Codex window and
+labels only that new window as Asclepius:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start-AsclepiusCodexIdentitySmoke.ps1
+```
