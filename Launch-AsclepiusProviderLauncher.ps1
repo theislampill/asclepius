@@ -305,7 +305,7 @@ function Test-ModelCanRun {
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Asclepius" Width="980" Height="640" MinWidth="820" MinHeight="560"
         WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="NoResize"
-        Background="#111111" FontFamily="Segoe UI" UseLayoutRounding="True" SnapsToDevicePixels="True"
+        AllowsTransparency="True" Background="Transparent" FontFamily="Segoe UI" UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Display">
   <Window.Resources>
     <Style x:Key="NavText" TargetType="TextBlock">
@@ -496,16 +496,28 @@ function Test-ModelCanRun {
         </Setter.Value>
       </Setter>
     </Style>
+    <Style x:Key="DarkContextMenu" TargetType="{x:Type ContextMenu}">
+      <Setter Property="Background" Value="#202020"/>
+      <Setter Property="BorderBrush" Value="#444444"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="4"/>
+    </Style>
+    <Style x:Key="DarkMenuItem" TargetType="{x:Type MenuItem}">
+      <Setter Property="Foreground" Value="#F4F4F4"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Padding" Value="14,9"/>
+      <Setter Property="FontSize" Value="13"/>
+    </Style>
   </Window.Resources>
 
-  <Border BorderBrush="#282828" BorderThickness="1" Background="#111111">
+  <Border BorderBrush="#282828" BorderThickness="1" Background="#111111" CornerRadius="15">
     <Grid>
       <Grid.RowDefinitions>
         <RowDefinition Height="34"/>
         <RowDefinition Height="*"/>
       </Grid.RowDefinitions>
 
-      <Border Name="TitleBar" Grid.Row="0" Background="#111111" BorderBrush="#262626" BorderThickness="0,0,0,1">
+      <Border Name="TitleBar" Grid.Row="0" Background="Transparent" BorderBrush="#262626" BorderThickness="0,0,0,1" CornerRadius="15,15,0,0">
         <DockPanel LastChildFill="True">
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
             <Button Name="MinimizeButton" Style="{StaticResource TitleButton}" Content="&#xE921;"/>
@@ -535,8 +547,21 @@ function Test-ModelCanRun {
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
             <Button Name="RefreshButton" Style="{StaticResource PillButton}" Content="Refresh" Margin="0,0,8,0"/>
             <Button Name="OAuthButton" Style="{StaticResource PillButton}" Content="Nous OAuth" Margin="0,0,8,0"/>
-            <Button Name="HermesUpdateButton" Style="{StaticResource PillButton}" Content="Hermes" Margin="0,0,8,0"/>
-            <Button Name="SessionsButton" Style="{StaticResource PillButton}" Content="Sessions"/>
+            <Button Name="ToolsButton" Style="{StaticResource PillButton}" Content="Tools">
+              <Button.ContextMenu>
+                <ContextMenu Style="{StaticResource DarkContextMenu}">
+                  <MenuItem Name="HermesUpdateMenuItem" Header="Hermes update" Style="{StaticResource DarkMenuItem}"/>
+                  <MenuItem Name="SessionsMenuItem" Header="Hermes sessions" Style="{StaticResource DarkMenuItem}"/>
+                  <Separator/>
+                  <MenuItem Name="SmokeMenuItem" Header="Smoke selected route" Style="{StaticResource DarkMenuItem}"/>
+                  <Separator/>
+                  <MenuItem Name="SetNousKeyMenuItem" Header="Set Nous key" Style="{StaticResource DarkMenuItem}"/>
+                  <MenuItem Name="ClearNousKeyMenuItem" Header="Clear Nous key" Style="{StaticResource DarkMenuItem}"/>
+                  <MenuItem Name="SetOpenRouterKeyMenuItem" Header="Set OpenRouter key" Style="{StaticResource DarkMenuItem}"/>
+                  <MenuItem Name="ClearOpenRouterKeyMenuItem" Header="Clear OpenRouter key" Style="{StaticResource DarkMenuItem}"/>
+                </ContextMenu>
+              </Button.ContextMenu>
+            </Button>
           </StackPanel>
           <StackPanel>
             <TextBlock Text="Asclepius" Foreground="#F4F4F4" FontWeight="SemiBold" FontSize="20"/>
@@ -597,18 +622,10 @@ function Test-ModelCanRun {
                 <Button Grid.Column="0" Style="{StaticResource PillButton}" Content="Default permissions" Margin="0,0,10,0"/>
                 <Button Grid.Column="1" Style="{StaticResource PillButton}" Content="Work locally" Margin="0,0,10,0"/>
                 <Button Grid.Column="3" Style="{StaticResource PillButton}" Content="Custom Medium" Margin="0,0,10,0"/>
-                <Button Name="LaunchButton" Grid.Column="4" Style="{StaticResource PrimaryButton}" Content="Launch Codex"/>
+                <Button Name="LaunchButton" Grid.Column="4" Style="{StaticResource PrimaryButton}" Content="Launch"/>
               </Grid>
             </Grid>
           </Border>
-
-          <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,18,0,0">
-            <Button Name="SetNousKeyButton" Style="{StaticResource PillButton}" Content="Nous key" Margin="0,0,8,0"/>
-            <Button Name="ClearNousKeyButton" Style="{StaticResource PillButton}" Content="Clear Nous" Margin="0,0,8,0"/>
-            <Button Name="SetOpenRouterKeyButton" Style="{StaticResource PillButton}" Content="OpenRouter key" Margin="0,0,8,0"/>
-            <Button Name="ClearOpenRouterKeyButton" Style="{StaticResource PillButton}" Content="Clear OpenRouter" Margin="0,0,8,0"/>
-            <Button Name="SmokeButton" Style="{StaticResource PillButton}" Content="Smoke"/>
-          </StackPanel>
         </Grid>
       </Grid>
     </Grid>
@@ -621,13 +638,20 @@ $script:Window = [Windows.Markup.XamlReader]::Load($reader)
 
 $names = @(
   "TitleBar","MinimizeButton","MaximizeButton","CloseButton","RefreshButton","OAuthButton",
-  "HermesUpdateButton","SessionsButton","RouteSummary","StatusBlock","FilterBox","RouteCombo",
+  "ToolsButton","RouteSummary","StatusBlock","FilterBox","RouteCombo",
   "LaunchButton","AuthBlock","InstallPanel","InstallCodexButton","InstallWslButton",
-  "InstallHermesButton","InstallPythonButton","RefreshChecksButton","SetNousKeyButton",
-  "ClearNousKeyButton","SetOpenRouterKeyButton","ClearOpenRouterKeyButton","SmokeButton"
+  "InstallHermesButton","InstallPythonButton","RefreshChecksButton"
 )
 foreach ($name in $names) {
   Set-Variable -Name $name -Value $script:Window.FindName($name) -Scope Script
+}
+
+foreach ($name in @(
+  "HermesUpdateMenuItem","SessionsMenuItem","SmokeMenuItem","SetNousKeyMenuItem",
+  "ClearNousKeyMenuItem","SetOpenRouterKeyMenuItem","ClearOpenRouterKeyMenuItem"
+)) {
+  $item = @($script:ToolsButton.ContextMenu.Items | Where-Object { $_.Name -eq $name } | Select-Object -First 1)[0]
+  Set-Variable -Name $name -Value $item -Scope Script
 }
 
 $script:Window.Add_SourceInitialized({
@@ -731,7 +755,7 @@ function Update-Details {
   if (-not $m) {
     $script:RouteSummary.Text = "No matching cloud routes."
     $script:LaunchButton.IsEnabled = $false
-    $script:SmokeButton.IsEnabled = $false
+    $script:SmokeMenuItem.IsEnabled = $false
     return
   }
 
@@ -739,7 +763,7 @@ function Update-Details {
   $script:RouteSummary.Text = "$($m.billing_label) | $(Get-ProviderShortName -Model $m) | $($m.model_id) | $($m.price_text)"
   $script:AuthBlock.Text = $auth
   $script:LaunchButton.IsEnabled = $true
-  $script:SmokeButton.IsEnabled = $true
+  $script:SmokeMenuItem.IsEnabled = $true
 }
 
 function Apply-Filter {
@@ -768,7 +792,7 @@ function Populate-Models {
   param([switch]$ForceRefresh)
   try {
     $script:LaunchButton.IsEnabled = $false
-    $script:SmokeButton.IsEnabled = $false
+    $script:SmokeMenuItem.IsEnabled = $false
     Set-Status "Refreshing cloud model catalog..."
     $script:Catalog = Load-Models -ForceRefresh:$ForceRefresh
     $script:AllModels = @($script:Catalog.models)
@@ -807,7 +831,12 @@ $script:OAuthButton.Add_Click({
     Set-Status "Hermes OAuth script missing."
   }
 })
-$script:HermesUpdateButton.Add_Click({
+$script:ToolsButton.Add_Click({
+  $script:ToolsButton.ContextMenu.PlacementTarget = $script:ToolsButton
+  $script:ToolsButton.ContextMenu.Placement = [System.Windows.Controls.Primitives.PlacementMode]::Bottom
+  $script:ToolsButton.ContextMenu.IsOpen = $true
+})
+$script:HermesUpdateMenuItem.Add_Click({
   $script = Join-Path $Root "Update-HermesGolden.ps1"
   if (Test-Path -LiteralPath $script) {
     Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$script) -WorkingDirectory $Root | Out-Null
@@ -816,7 +845,7 @@ $script:HermesUpdateButton.Add_Click({
     Set-Status "Hermes update script missing."
   }
 })
-$script:SessionsButton.Add_Click({
+$script:SessionsMenuItem.Add_Click({
   $script = Join-Path $Root "Manage-AsclepiusHermesSessions.ps1"
   if (Test-Path -LiteralPath $script) {
     Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$script) -WorkingDirectory $Root | Out-Null
@@ -825,24 +854,24 @@ $script:SessionsButton.Add_Click({
     Set-Status "Hermes session script missing."
   }
 })
-$script:SetNousKeyButton.Add_Click({
+$script:SetNousKeyMenuItem.Add_Click({
   if (Set-ProviderKey -ProviderName "Nous" -SecretName "nous_api_key" -CurrentStatus (Get-NousKeyStatus)) {
     Populate-Models -ForceRefresh
     Set-Status "Nous key saved."
   }
 })
-$script:ClearNousKeyButton.Add_Click({
+$script:ClearNousKeyMenuItem.Add_Click({
   Clear-ProviderKey -SecretName "nous_api_key"
   Populate-Models -ForceRefresh
   Set-Status "Nous key cleared. Free Nous routes use Hermes OAuth."
 })
-$script:SetOpenRouterKeyButton.Add_Click({
+$script:SetOpenRouterKeyMenuItem.Add_Click({
   if (Set-ProviderKey -ProviderName "OpenRouter" -SecretName "openrouter_api_key" -CurrentStatus (Get-OpenRouterKeyStatus)) {
     Populate-Models -ForceRefresh
     Set-Status "OpenRouter key saved."
   }
 })
-$script:ClearOpenRouterKeyButton.Add_Click({
+$script:ClearOpenRouterKeyMenuItem.Add_Click({
   Clear-ProviderKey -SecretName "openrouter_api_key"
   Populate-Models -ForceRefresh
   Set-Status "OpenRouter key cleared."
@@ -859,7 +888,7 @@ $script:LaunchButton.Add_Click({
     $script:Window.Close()
   }
 })
-$script:SmokeButton.Add_Click({
+$script:SmokeMenuItem.Add_Click({
   $m = Get-SelectedModel
   if (-not $m -or -not (Test-ModelCanRun -Model $m)) { return }
   try {

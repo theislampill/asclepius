@@ -336,7 +336,7 @@ function Set-CloudCodexModel {
     "openrouter" { "OpenRouter" }
     default { $provider }
   }
-  $providerName = "Asclepius $providerDisplay"
+  $providerName = "$providerDisplay via Hermes"
   $configPath = Join-Path $CodexHome "config.toml"
   if (-not (Test-Path -LiteralPath $configPath)) {
     throw "Cloud-Codex config not found: $configPath"
