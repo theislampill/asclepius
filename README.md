@@ -1,6 +1,8 @@
 # Cloud-Codex
 
 Cloud-Codex is an isolated Codex Desktop launcher profile for cloud model routing.
+Asclepius is the Windows supervisor app that owns the user-facing control
+surface while keeping Codex Desktop and Hermes independently updateable.
 
 This redistributable baseline does not include Codex, Hermes, credentials, logs,
 generated model catalogs, or Electron profile state. It installs only local
@@ -11,7 +13,8 @@ installations at runtime.
 
 - Keeps the default Codex profile untouched.
 - Creates an isolated Codex home under `%USERPROFILE%\.codex-nous-cloud`.
-- Adds a desktop launcher named `asclepius.lnk`.
+- Builds a local `Asclepius.exe` supervisor app and adds a desktop launcher
+  named `asclepius.lnk`.
 - Starts a local-only Responses bridge on `127.0.0.1:8655`.
 - Starts Hermes' Nous OAuth proxy on `127.0.0.1:8645` when needed.
 - Routes Codex turns through `hermes chat` by default so Hermes sessions,
@@ -24,7 +27,7 @@ installations at runtime.
   - `OpenRouter | deepseek/deepseek-v4-flash`
 - Supports Hermes OAuth login for free Nous models.
 - Supports optional direct provider API keys stored only in the installed local profile.
-- Provides companion controls for Hermes Golden updates and Hermes session
+- Provides in-app controls for Hermes Golden updates and Hermes session
   deletion without modifying Codex Desktop's own updater.
 
 ## Architecture
@@ -43,10 +46,27 @@ Hermes executes tools in its own WSL runtime. The Codex Desktop sandbox selector
 is visible profile intent, not a hard sandbox around Hermes tools, so the bridge
 adds that policy and workspace mapping to each Hermes turn.
 
-Because Cloud-Codex launches the signed Codex Desktop executable, Windows still
-shows the app identity as `Codex` in Alt-Tab. Showing `Asclepius` there requires
-a separately packaged app wrapper; this package does not modify or repackage
-Codex Desktop.
+Asclepius owns its supervisor window and launcher identity. When it launches
+the signed Codex Desktop executable, Codex's own editing/chat window still
+belongs to Codex. This package does not modify or repackage Codex Desktop.
+
+## Design Discipline
+
+- **12FA:** Codex and Hermes are explicit external dependencies; runtime config
+  is passed through environment variables and isolated profile files; build,
+  install, and run are separate scripts; child processes are disposable; logs
+  stream into the Asclepius UI/status surface.
+- **Nemawashi:** Asclepius is a supervisor beside Codex, not a Codex patch.
+  Affected owners are Codex Desktop, Hermes Agent, and the local Asclepius
+  profile. Rollback is replacing `asclepius.lnk` with the old VBS picker target
+  or launching `Launch-CloudCodexModelPicker.vbs` directly.
+- **ZTA:** Sensitive actions route through local scripts under the Asclepius
+  root, confirm paid/unknown models, and keep Hermes updates/session deletion
+  behind explicit user action.
+- **Secret Egress Filter:** The supervisor redacts common token/key/cookie
+  shapes before showing command output in the UI.
+- **Normal Form:** Workspace paths are canonicalized and converted to WSL paths
+  before being handed to Hermes.
 
 Set `CODEX_CLOUD_RUNTIME_MODE=proxy` before starting the bridge to force the
 older raw model-proxy behavior for debugging.

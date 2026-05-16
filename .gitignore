@@ -7,6 +7,8 @@ __pycache__/
 *.pyc
 bridge-state.json
 bridge-state.json.tmp
+asclepius-smoke.json
+Asclepius.exe
 
 # Local credentials and auth material
 cloud-secrets.json

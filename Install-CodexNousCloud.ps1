@@ -6,6 +6,8 @@ $ElectronUserData = Join-Path $Root "electron-user-data"
 $DesktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "asclepius.lnk"
 
 $required = @(
+  "AsclepiusApp.cs",
+  "Build-AsclepiusApp.ps1",
   "codex_nous_bridge.py",
   "Start-CodexNousCloudServices.ps1",
   "Refresh-NousCatalog.ps1",
@@ -31,6 +33,14 @@ foreach ($name in $required) {
 New-Item -ItemType Directory -Force -Path $Root, $CodexHome, $ElectronUserData | Out-Null
 foreach ($name in $required) {
   Copy-Item -LiteralPath (Join-Path $Source $name) -Destination $Root -Force
+}
+
+try {
+  & (Join-Path $Root "Build-AsclepiusApp.ps1") | Out-Null
+  $asclepiusExe = Join-Path $Root "Asclepius.exe"
+} catch {
+  $asclepiusExe = $null
+  Write-Warning "Could not build Asclepius.exe: $($_.Exception.Message)"
 }
 
 $catalog = Join-Path $Root "codex-model-catalog.json"
@@ -74,8 +84,13 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 $wsh = New-Object -ComObject WScript.Shell
 $shortcut = $wsh.CreateShortcut($DesktopShortcut)
-$shortcut.TargetPath = "wscript.exe"
-$shortcut.Arguments = "`"$Root\Launch-CloudCodexModelPicker.vbs`""
+if ($asclepiusExe -and (Test-Path -LiteralPath $asclepiusExe)) {
+  $shortcut.TargetPath = $asclepiusExe
+  $shortcut.Arguments = ""
+} else {
+  $shortcut.TargetPath = "wscript.exe"
+  $shortcut.Arguments = "`"$Root\Launch-CloudCodexModelPicker.vbs`""
+}
 $shortcut.WorkingDirectory = $Root
 $shortcut.Description = "Asclepius isolated Cloud-Codex launcher"
 
@@ -85,7 +100,9 @@ try {
     Sort-Object Path -Descending |
     Select-Object -First 1).Path
 } catch {}
-if ($codexExe) {
+if ($asclepiusExe -and (Test-Path -LiteralPath $asclepiusExe)) {
+  $shortcut.IconLocation = "$asclepiusExe,0"
+} elseif ($codexExe) {
   $shortcut.IconLocation = "$codexExe,0"
 }
 $shortcut.Save()
