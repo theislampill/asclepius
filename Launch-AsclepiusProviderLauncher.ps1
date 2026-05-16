@@ -160,13 +160,23 @@ function Load-Models {
 }
 
 function Test-CodexDesktopInstalled {
+  $running = Get-Process -Name Codex -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -and $_.Path.EndsWith("\app\Codex.exe", [System.StringComparison]::OrdinalIgnoreCase) } |
+    Select-Object -First 1
+  if ($running) { return $true }
+
   try {
     $codex = Resolve-Path "C:\Program Files\WindowsApps\OpenAI.Codex_*\app\Codex.exe" -ErrorAction Stop |
       Sort-Object Path -Descending |
       Select-Object -First 1
     return $null -ne $codex
   } catch {
-    return $false
+    try {
+      $pkg = Get-AppxPackage -Name "OpenAI.Codex" -ErrorAction Stop | Select-Object -First 1
+      return $null -ne $pkg
+    } catch {
+      return $false
+    }
   }
 }
 
@@ -266,7 +276,7 @@ function Test-ModelCanRun {
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Asclepius" Width="1220" Height="780" MinWidth="980" MinHeight="640"
+        Title="Asclepius" Width="920" Height="620" MinWidth="760" MinHeight="560"
         WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="CanResizeWithGrip"
         Background="#111111" FontFamily="Segoe UI">
   <Window.Resources>
@@ -375,14 +385,14 @@ function Test-ModelCanRun {
                   </ControlTemplate>
                 </ToggleButton.Template>
               </ToggleButton>
-              <ContentPresenter x:Name="ContentSite"
-                                IsHitTestVisible="False"
-                                Content="{TemplateBinding SelectionBoxItem}"
-                                ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
-                                ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
-                                Margin="12,0,32,0"
-                                VerticalAlignment="Center"
-                                HorizontalAlignment="Left"/>
+              <TextBlock x:Name="ContentSite"
+                         IsHitTestVisible="False"
+                         Text="{Binding SelectedItem.pickerDisplay, RelativeSource={RelativeSource TemplatedParent}}"
+                         Foreground="#F4F4F4"
+                         TextTrimming="CharacterEllipsis"
+                         Margin="12,0,32,0"
+                         VerticalAlignment="Center"
+                         HorizontalAlignment="Stretch"/>
               <Popup x:Name="Popup"
                      Placement="Bottom"
                      IsOpen="{TemplateBinding IsDropDownOpen}"
@@ -428,126 +438,85 @@ function Test-ModelCanRun {
         </DockPanel>
       </Border>
 
-      <Grid Grid.Row="1">
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="286"/>
-          <ColumnDefinition Width="*"/>
-        </Grid.ColumnDefinitions>
+      <Grid Grid.Row="1" Background="#141414" Margin="34">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
 
-        <Border Grid.Column="0" Background="#182018" BorderBrush="#242C24" BorderThickness="0,0,1,0">
-          <Grid>
-            <Grid.RowDefinitions>
-              <RowDefinition Height="Auto"/>
-              <RowDefinition Height="Auto"/>
-              <RowDefinition Height="*"/>
-              <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
-            <StackPanel Margin="0,42,0,0">
-              <TextBlock Style="{StaticResource NavText}" Text="Quick chat"/>
-              <TextBlock Style="{StaticResource NavText}" Text="Search"/>
-              <TextBlock Style="{StaticResource NavText}" Text="Skills"/>
-              <TextBlock Style="{StaticResource NavText}" Text="Plugins"/>
-              <TextBlock Style="{StaticResource NavText}" Text="Automations"/>
-            </StackPanel>
-            <StackPanel Grid.Row="1" Margin="0,34,0,0">
-              <TextBlock Text="Projects" Foreground="#858585" FontSize="14" Margin="16,0,0,12"/>
-              <TextBlock Style="{StaticResource NavText}" Text="ai"/>
-              <Border Background="#30372E" Height="46" Margin="8,0,8,0">
-                <TextBlock Text="Asclepius" Foreground="#F4F4F4" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Center" Margin="16,0,0,0"/>
-              </Border>
-            </StackPanel>
-            <StackPanel Grid.Row="3" Margin="0,0,0,14">
-              <TextBlock Text="Chats" Foreground="#858585" FontSize="14" Margin="16,0,0,14"/>
-              <TextBlock Text="No chats" Foreground="#777777" FontSize="14" Margin="16,0,0,0"/>
-              <TextBlock Text="Settings" Foreground="#F0F0F0" FontSize="14" Margin="16,34,0,0"/>
-            </StackPanel>
-          </Grid>
-        </Border>
+        <DockPanel Grid.Row="0" LastChildFill="True">
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+            <Button Name="RefreshButton" Style="{StaticResource PillButton}" Content="Refresh" Margin="0,0,8,0"/>
+            <Button Name="OAuthButton" Style="{StaticResource PillButton}" Content="Nous OAuth" Margin="0,0,8,0"/>
+            <Button Name="HermesUpdateButton" Style="{StaticResource PillButton}" Content="Hermes update" Margin="0,0,8,0"/>
+            <Button Name="SessionsButton" Style="{StaticResource PillButton}" Content="Sessions"/>
+          </StackPanel>
+          <StackPanel>
+            <TextBlock Text="Asclepius" Foreground="#F4F4F4" FontWeight="SemiBold" FontSize="18"/>
+            <TextBlock Text="Select a cloud route before Codex opens." Foreground="#9D9D9D" FontSize="13" Margin="0,8,0,0"/>
+          </StackPanel>
+        </DockPanel>
 
-        <Grid Grid.Column="1" Background="#141414">
+        <StackPanel Name="InstallPanel" Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,28,0,0">
+          <Button Name="InstallCodexButton" Style="{StaticResource PillButton}" Content="Install Codex" Margin="0,0,10,0"/>
+          <Button Name="InstallWslButton" Style="{StaticResource PillButton}" Content="Install WSL Ubuntu" Margin="0,0,10,0"/>
+          <Button Name="InstallHermesButton" Style="{StaticResource PillButton}" Content="Install Hermes" Margin="0,0,10,0"/>
+          <Button Name="InstallPythonButton" Style="{StaticResource PillButton}" Content="Install Python" Margin="0,0,10,0"/>
+          <Button Name="RefreshChecksButton" Style="{StaticResource PillButton}" Content="Refresh checks"/>
+        </StackPanel>
+
+        <Grid Grid.Row="2" VerticalAlignment="Center" MaxWidth="760" HorizontalAlignment="Center">
           <Grid.RowDefinitions>
-            <RowDefinition Height="64"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="236"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
 
-          <DockPanel Grid.Row="0" LastChildFill="True" Margin="30,0,30,0">
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-              <Button Name="RefreshButton" Style="{StaticResource PillButton}" Content="Refresh" Margin="0,0,10,0"/>
-              <Button Name="OAuthButton" Style="{StaticResource PillButton}" Content="Nous OAuth" Margin="0,0,10,0"/>
-              <Button Name="HermesUpdateButton" Style="{StaticResource PillButton}" Content="Hermes update" Margin="0,0,10,0"/>
-              <Button Name="SessionsButton" Style="{StaticResource PillButton}" Content="Sessions"/>
-            </StackPanel>
-            <TextBlock Text="asclepius" Foreground="#F4F4F4" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center"/>
-          </DockPanel>
+          <TextBlock Name="StatusBlock" Grid.Row="0" Foreground="#A6A6A6" FontSize="13" Margin="0,0,0,14" Text="Starting Asclepius..."/>
 
-          <Grid Grid.Row="1">
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,50">
-              <TextBlock Text="What should we build in Asclepius?" Foreground="#F7F7F7" FontSize="38" TextAlignment="Center"/>
-              <TextBlock Name="RouteSummary" Text="Loading cloud routes..." Foreground="#B0B0B0" FontSize="14" TextAlignment="Center" Margin="0,22,0,0" MaxWidth="760" TextTrimming="CharacterEllipsis"/>
-            </StackPanel>
-          </Grid>
-
-          <Grid Grid.Row="2" HorizontalAlignment="Center" Width="760" Margin="0,0,0,28">
-            <Grid.RowDefinitions>
-              <RowDefinition Height="42"/>
-              <RowDefinition Height="112"/>
-              <RowDefinition Height="42"/>
-            </Grid.RowDefinitions>
-
-            <TextBlock Name="StatusBlock" Grid.Row="0" Foreground="#A6A6A6" FontSize="13" VerticalAlignment="Center" Text="Starting Asclepius..."/>
-
-            <Border Grid.Row="1" Background="#2D2D2D" BorderBrush="#414141" BorderThickness="1" CornerRadius="18">
-              <Grid Margin="14">
-                <Grid.RowDefinitions>
-                  <RowDefinition Height="42"/>
-                  <RowDefinition Height="42"/>
-                </Grid.RowDefinitions>
-                <TextBox Name="FilterBox" Grid.Row="0" Style="{StaticResource DarkTextBox}" Text=""/>
-                <Grid Grid.Row="1">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="42"/>
-                    <ColumnDefinition Width="170"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="126"/>
-                    <ColumnDefinition Width="86"/>
-                  </Grid.ColumnDefinitions>
-                  <Button Grid.Column="0" Style="{StaticResource PillButton}" Padding="0" Content="+"/>
-                  <Button Grid.Column="1" Style="{StaticResource PillButton}" Content="Default permissions" Margin="10,0,10,0"/>
-                  <ComboBox Name="RouteCombo" Grid.Column="2" Height="38" DisplayMemberPath="picker_display" Style="{StaticResource DarkComboBox}"/>
-                  <Button Grid.Column="3" Style="{StaticResource PillButton}" Content="Custom Medium" Margin="10,0,10,0"/>
-                  <Button Name="LaunchButton" Grid.Column="4" Style="{StaticResource PillButton}" Content="Launch" Background="#E8E8E8" Foreground="#171717"/>
-                </Grid>
+          <Border Grid.Row="1" Background="#2D2D2D" BorderBrush="#414141" BorderThickness="1" CornerRadius="18" Padding="16">
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="40"/>
+                <RowDefinition Height="52"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="46"/>
+              </Grid.RowDefinitions>
+              <TextBox Name="FilterBox" Grid.Row="0" Style="{StaticResource DarkTextBox}" Text=""/>
+              <ComboBox Name="RouteCombo" Grid.Row="1" Height="38" Style="{StaticResource DarkComboBox}">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding pickerDisplay}" Foreground="#F4F4F4" TextTrimming="CharacterEllipsis"/>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <StackPanel Grid.Row="2" Margin="0,8,0,12">
+                <TextBlock Name="RouteSummary" Text="Loading cloud routes..." Foreground="#B0B0B0" FontSize="13" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Name="AuthBlock" Foreground="#929292" FontSize="12" Margin="0,6,0,0" TextTrimming="CharacterEllipsis"/>
+              </StackPanel>
+              <Grid Grid.Row="3">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Style="{StaticResource PillButton}" Content="Default permissions" Margin="0,0,10,0"/>
+                <Button Grid.Column="1" Style="{StaticResource PillButton}" Content="Work locally" Margin="0,0,10,0"/>
+                <Button Grid.Column="3" Style="{StaticResource PillButton}" Content="Custom Medium" Margin="0,0,10,0"/>
+                <Button Name="LaunchButton" Grid.Column="4" Style="{StaticResource PillButton}" Content="Launch Codex" Background="#E8E8E8" Foreground="#171717"/>
               </Grid>
-            </Border>
-
-            <Grid Grid.Row="2">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Text="ai" Foreground="#E8E8E8" FontSize="14" VerticalAlignment="Center" Margin="78,0,42,0"/>
-              <TextBlock Grid.Column="1" Text="Work locally" Foreground="#E8E8E8" FontSize="14" VerticalAlignment="Center" Margin="0,0,42,0"/>
-              <TextBlock Grid.Column="2" Text="main" Foreground="#E8E8E8" FontSize="14" VerticalAlignment="Center" Margin="0,0,42,0"/>
-              <TextBlock Name="AuthBlock" Grid.Column="3" Foreground="#929292" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
             </Grid>
-          </Grid>
+          </Border>
 
-          <StackPanel Name="InstallPanel" Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,4,0,0">
-            <Button Name="InstallCodexButton" Style="{StaticResource PillButton}" Content="Install Codex" Margin="0,0,10,0"/>
-            <Button Name="InstallWslButton" Style="{StaticResource PillButton}" Content="Install WSL Ubuntu" Margin="0,0,10,0"/>
-            <Button Name="InstallHermesButton" Style="{StaticResource PillButton}" Content="Install Hermes" Margin="0,0,10,0"/>
-            <Button Name="InstallPythonButton" Style="{StaticResource PillButton}" Content="Install Python" Margin="0,0,10,0"/>
-            <Button Name="RefreshChecksButton" Style="{StaticResource PillButton}" Content="Refresh checks"/>
-          </StackPanel>
-
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,30,18">
-            <Button Name="SetNousKeyButton" Style="{StaticResource PillButton}" Content="Nous key" Margin="0,0,10,0"/>
-            <Button Name="ClearNousKeyButton" Style="{StaticResource PillButton}" Content="Clear Nous" Margin="0,0,10,0"/>
-            <Button Name="SetOpenRouterKeyButton" Style="{StaticResource PillButton}" Content="OpenRouter key" Margin="0,0,10,0"/>
-            <Button Name="ClearOpenRouterKeyButton" Style="{StaticResource PillButton}" Content="Clear OpenRouter" Margin="0,0,10,0"/>
+          <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,18,0,0">
+            <Button Name="SetNousKeyButton" Style="{StaticResource PillButton}" Content="Nous key" Margin="0,0,8,0"/>
+            <Button Name="ClearNousKeyButton" Style="{StaticResource PillButton}" Content="Clear Nous" Margin="0,0,8,0"/>
+            <Button Name="SetOpenRouterKeyButton" Style="{StaticResource PillButton}" Content="OpenRouter key" Margin="0,0,8,0"/>
+            <Button Name="ClearOpenRouterKeyButton" Style="{StaticResource PillButton}" Content="Clear OpenRouter" Margin="0,0,8,0"/>
             <Button Name="SmokeButton" Style="{StaticResource PillButton}" Content="Smoke"/>
           </StackPanel>
         </Grid>
@@ -611,6 +580,11 @@ function Set-PickerDisplay {
     $Model.picker_display = $label
   } else {
     $Model | Add-Member -NotePropertyName "picker_display" -NotePropertyValue $label
+  }
+  if ($Model.PSObject.Properties.Name -contains "pickerDisplay") {
+    $Model.pickerDisplay = $label
+  } else {
+    $Model | Add-Member -NotePropertyName "pickerDisplay" -NotePropertyValue $label
   }
 }
 

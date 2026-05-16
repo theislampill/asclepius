@@ -14,9 +14,9 @@ installations at runtime.
 - Keeps the default Codex profile untouched.
 - Creates an isolated Codex home under `%USERPROFILE%\.codex-nous-cloud`.
 - Adds a desktop launcher named `asclepius.lnk` that runs
-  `Launch-AsclepiusProviderLauncher.vbs`, shows the Codex-style Asclepius
-  provider/portal launcher, then opens the real Codex Desktop executable with
-  Hermes underneath.
+  `Launch-AsclepiusProviderLauncher.vbs`, shows a standalone Asclepius
+  provider/portal preflight screen, then opens the real Codex Desktop
+  executable with Hermes underneath.
 - Does not install an `Asclepius.exe` host. Earlier window-parenting host
   attempts were removed because they can destabilize Codex.
 - Starts a local-only Responses bridge on `127.0.0.1:8655`.
@@ -53,8 +53,9 @@ Hermes executes tools in its own WSL runtime. The Codex Desktop sandbox selector
 is visible profile intent, not a hard sandbox around Hermes tools, so the bridge
 adds that policy and workspace mapping to each Hermes turn.
 
-Asclepius owns no chat window. The visible app is Codex Desktop. This package
-does not modify, embed, or repackage Codex Desktop.
+Asclepius owns no chat window and does not draw a picker over Codex. Codex
+starts only after a route is selected. The visible work app is Codex Desktop.
+This package does not modify, embed, or repackage Codex Desktop.
 
 ## Design Discipline
 
@@ -125,8 +126,8 @@ From this directory:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-CodexNousCloud.ps1
 ```
 
-Then open `asclepius.lnk` from the desktop. It opens the Codex-style Asclepius
-provider launcher first. After you choose a route, it launches the real signed
+Then open `asclepius.lnk` from the desktop. It opens the Asclepius provider
+preflight screen first. After you choose a route, it launches the real signed
 Codex Desktop app with the isolated Hermes-backed config.
 
 If Nous OAuth login is needed, run:
