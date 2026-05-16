@@ -68,7 +68,7 @@ personality = "pragmatic"
 sandbox = "elevated"
 
 [model_providers.nous-cloud]
-name = "Nous via Hermes"
+name = "@nous:deepseek/deepseek-v4-flash via Hermes"
 base_url = "http://127.0.0.1:8655/v1"
 experimental_bearer_token = "local-codex-nous-cloud"
 wire_api = "responses"

@@ -400,6 +400,31 @@ function Test-ModelCanRun {
         </Setter.Value>
       </Setter>
     </Style>
+    <Style x:Key="TitleMenuButton" TargetType="Button">
+      <Setter Property="Height" Value="34"/>
+      <Setter Property="Padding" Value="0,0,0,0"/>
+      <Setter Property="Foreground" Value="#BDBDBD"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="FontSize" Value="14"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="MenuButtonBorder" Background="{TemplateBinding Background}" Padding="0,0,0,1">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="MenuButtonBorder" Property="Background" Value="#242424"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="MenuButtonBorder" Property="Background" Value="#2C2C2C"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
     <Style x:Key="DarkTextBox" TargetType="TextBox">
       <Setter Property="Background" Value="#2D2D2D"/>
       <Setter Property="Foreground" Value="#D8D8D8"/>
@@ -526,30 +551,17 @@ function Test-ModelCanRun {
           </StackPanel>
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
             <Border Width="18" Height="18" CornerRadius="6" Background="#426DFF" Margin="14,0,14,0"/>
-            <TextBlock Text="File" Foreground="#BDBDBD" FontSize="14" Margin="0,0,24,0"/>
-            <TextBlock Text="Edit" Foreground="#BDBDBD" FontSize="14" Margin="0,0,24,0"/>
-            <TextBlock Text="View" Foreground="#BDBDBD" FontSize="14" Margin="0,0,24,0"/>
-            <TextBlock Text="Window" Foreground="#BDBDBD" FontSize="14" Margin="0,0,24,0"/>
-            <TextBlock Text="Help" Foreground="#BDBDBD" FontSize="14" Margin="0,0,24,0"/>
-          </StackPanel>
-        </DockPanel>
-      </Border>
-
-      <Grid Grid.Row="1" Background="#141414" Margin="38">
-        <Grid.RowDefinitions>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="*"/>
-          <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-
-        <DockPanel Grid.Row="0" LastChildFill="True">
-          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
-            <Button Name="RefreshButton" Style="{StaticResource PillButton}" Content="Refresh" Margin="0,0,8,0"/>
-            <Button Name="OAuthButton" Style="{StaticResource PillButton}" Content="Nous OAuth" Margin="0,0,8,0"/>
-            <Button Name="ToolsButton" Style="{StaticResource PillButton}" Content="Tools">
+            <Button Name="TitleFileButton" Style="{StaticResource TitleMenuButton}" Content="File" Width="45" Margin="0,0,8,0">
               <Button.ContextMenu>
                 <ContextMenu Style="{StaticResource DarkContextMenu}">
+                  <MenuItem Name="CloseMenuItem" Header="Close" Style="{StaticResource DarkMenuItem}"/>
+                </ContextMenu>
+              </Button.ContextMenu>
+            </Button>
+            <Button Name="TitleToolsButton" Style="{StaticResource TitleMenuButton}" Content="Tools" Width="52">
+              <Button.ContextMenu>
+                <ContextMenu Style="{StaticResource DarkContextMenu}">
+                  <MenuItem Name="OAuthMenuItem" Header="Nous OAuth" Style="{StaticResource DarkMenuItem}"/>
                   <MenuItem Name="HermesUpdateMenuItem" Header="Hermes update" Style="{StaticResource DarkMenuItem}"/>
                   <MenuItem Name="SessionsMenuItem" Header="Hermes sessions" Style="{StaticResource DarkMenuItem}"/>
                   <Separator/>
@@ -563,6 +575,18 @@ function Test-ModelCanRun {
               </Button.ContextMenu>
             </Button>
           </StackPanel>
+        </DockPanel>
+      </Border>
+
+      <Grid Grid.Row="1" Background="#141414" Margin="38">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" LastChildFill="True">
           <StackPanel>
             <TextBlock Text="Asclepius" Foreground="#F4F4F4" FontWeight="SemiBold" FontSize="20"/>
             <TextBlock Text="Provider route" Foreground="#9D9D9D" FontSize="13" Margin="0,8,0,0"/>
@@ -577,24 +601,21 @@ function Test-ModelCanRun {
           <Button Name="RefreshChecksButton" Style="{StaticResource PillButton}" Content="Refresh checks"/>
         </StackPanel>
 
-        <Grid Grid.Row="2" VerticalAlignment="Center" MaxWidth="760" HorizontalAlignment="Center">
+        <Grid Grid.Row="2" VerticalAlignment="Center" Width="760" HorizontalAlignment="Center">
           <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
 
-          <TextBlock Name="StatusBlock" Grid.Row="0" Foreground="#A6A6A6" FontSize="13" Margin="0,0,0,14" Text="Starting Asclepius..."/>
-
-          <Border Grid.Row="1" Background="#2B2B2B" BorderBrush="#414141" BorderThickness="1" CornerRadius="16" Padding="16">
+          <Border Grid.Row="0" Background="#2B2B2B" BorderBrush="#414141" BorderThickness="1" CornerRadius="16" Padding="18" MinHeight="260">
             <Grid>
               <Grid.RowDefinitions>
                 <RowDefinition Height="24"/>
-                <RowDefinition Height="42"/>
-                <RowDefinition Height="12"/>
-                <RowDefinition Height="42"/>
+                <RowDefinition Height="44"/>
+                <RowDefinition Height="14"/>
+                <RowDefinition Height="44"/>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="46"/>
+                <RowDefinition Height="52"/>
               </Grid.RowDefinitions>
               <TextBlock Grid.Row="0" Text="Search" Foreground="#A6A6A6" FontSize="12" VerticalAlignment="Top"/>
               <Border Grid.Row="1" Background="#202020" BorderBrush="#3E3E3E" BorderThickness="1" CornerRadius="9">
@@ -614,18 +635,15 @@ function Test-ModelCanRun {
               <Grid Grid.Row="5">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="Auto"/>
-                  <ColumnDefinition Width="Auto"/>
                   <ColumnDefinition Width="*"/>
                   <ColumnDefinition Width="Auto"/>
-                  <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <Button Grid.Column="0" Style="{StaticResource PillButton}" Content="Default permissions" Margin="0,0,10,0"/>
-                <Button Grid.Column="1" Style="{StaticResource PillButton}" Content="Work locally" Margin="0,0,10,0"/>
-                <Button Grid.Column="3" Style="{StaticResource PillButton}" Content="Custom Medium" Margin="0,0,10,0"/>
-                <Button Name="LaunchButton" Grid.Column="4" Style="{StaticResource PrimaryButton}" Content="Launch"/>
+                <Button Name="RefreshButton" Grid.Column="0" Style="{StaticResource PillButton}" Content="Refresh"/>
+                <Button Name="LaunchButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="Launch"/>
               </Grid>
             </Grid>
           </Border>
+          <TextBlock Name="StatusBlock" Grid.Row="1" Foreground="#A6A6A6" FontSize="13" Margin="0,12,0,0" HorizontalAlignment="Left" Text="Starting Asclepius..."/>
         </Grid>
       </Grid>
     </Grid>
@@ -637,8 +655,8 @@ $reader = New-Object System.Xml.XmlNodeReader $xaml
 $script:Window = [Windows.Markup.XamlReader]::Load($reader)
 
 $names = @(
-  "TitleBar","MinimizeButton","MaximizeButton","CloseButton","RefreshButton","OAuthButton",
-  "ToolsButton","RouteSummary","StatusBlock","FilterBox","RouteCombo",
+  "TitleBar","TitleFileButton","TitleToolsButton","MinimizeButton","MaximizeButton","CloseButton",
+  "RefreshButton","RouteSummary","StatusBlock","FilterBox","RouteCombo",
   "LaunchButton","AuthBlock","InstallPanel","InstallCodexButton","InstallWslButton",
   "InstallHermesButton","InstallPythonButton","RefreshChecksButton"
 )
@@ -646,11 +664,16 @@ foreach ($name in $names) {
   Set-Variable -Name $name -Value $script:Window.FindName($name) -Scope Script
 }
 
+foreach ($name in @("CloseMenuItem")) {
+  $item = @($script:TitleFileButton.ContextMenu.Items | Where-Object { $_.Name -eq $name } | Select-Object -First 1)[0]
+  Set-Variable -Name $name -Value $item -Scope Script
+}
+
 foreach ($name in @(
-  "HermesUpdateMenuItem","SessionsMenuItem","SmokeMenuItem","SetNousKeyMenuItem",
-  "ClearNousKeyMenuItem","SetOpenRouterKeyMenuItem","ClearOpenRouterKeyMenuItem"
+  "OAuthMenuItem","HermesUpdateMenuItem","SessionsMenuItem","SmokeMenuItem",
+  "SetNousKeyMenuItem","ClearNousKeyMenuItem","SetOpenRouterKeyMenuItem","ClearOpenRouterKeyMenuItem"
 )) {
-  $item = @($script:ToolsButton.ContextMenu.Items | Where-Object { $_.Name -eq $name } | Select-Object -First 1)[0]
+  $item = @($script:TitleToolsButton.ContextMenu.Items | Where-Object { $_.Name -eq $name } | Select-Object -First 1)[0]
   Set-Variable -Name $name -Value $item -Scope Script
 }
 
@@ -818,11 +841,22 @@ $script:MaximizeButton.Add_Click({
   if ($script:Window.WindowState -eq [System.Windows.WindowState]::Maximized) { $script:Window.WindowState = [System.Windows.WindowState]::Normal } else { $script:Window.WindowState = [System.Windows.WindowState]::Maximized }
 })
 $script:CloseButton.Add_Click({ $script:Window.Close() })
+$script:CloseMenuItem.Add_Click({ $script:Window.Close() })
+$script:TitleFileButton.Add_Click({
+  $script:TitleFileButton.ContextMenu.PlacementTarget = $script:TitleFileButton
+  $script:TitleFileButton.ContextMenu.Placement = [System.Windows.Controls.Primitives.PlacementMode]::Bottom
+  $script:TitleFileButton.ContextMenu.IsOpen = $true
+})
+$script:TitleToolsButton.Add_Click({
+  $script:TitleToolsButton.ContextMenu.PlacementTarget = $script:TitleToolsButton
+  $script:TitleToolsButton.ContextMenu.Placement = [System.Windows.Controls.Primitives.PlacementMode]::Bottom
+  $script:TitleToolsButton.ContextMenu.IsOpen = $true
+})
 
 $script:RouteCombo.Add_SelectionChanged({ Update-Details })
 $script:FilterBox.Add_TextChanged({ Apply-Filter })
 $script:RefreshButton.Add_Click({ Populate-Models -ForceRefresh })
-$script:OAuthButton.Add_Click({
+$script:OAuthMenuItem.Add_Click({
   $script = Join-Path $Root "Start-HermesNousOAuthLogin.ps1"
   if (Test-Path -LiteralPath $script) {
     Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$script) -WorkingDirectory $Root | Out-Null
@@ -830,11 +864,6 @@ $script:OAuthButton.Add_Click({
   } else {
     Set-Status "Hermes OAuth script missing."
   }
-})
-$script:ToolsButton.Add_Click({
-  $script:ToolsButton.ContextMenu.PlacementTarget = $script:ToolsButton
-  $script:ToolsButton.ContextMenu.Placement = [System.Windows.Controls.Primitives.PlacementMode]::Bottom
-  $script:ToolsButton.ContextMenu.IsOpen = $true
 })
 $script:HermesUpdateMenuItem.Add_Click({
   $script = Join-Path $Root "Update-HermesGolden.ps1"

@@ -331,12 +331,7 @@ function Set-CloudCodexModel {
   }
   $provider = if ($SelectedModel -match '^([^/:]+)[:/]') { $matches[1] } else { "nous" }
   $upstream = if ($SelectedModel -match '^[^/:]+[:/](.+)$') { $matches[1] } else { $SelectedModel }
-  $providerDisplay = switch ($provider) {
-    "nous" { "Nous" }
-    "openrouter" { "OpenRouter" }
-    default { $provider }
-  }
-  $providerName = "$providerDisplay via Hermes"
+  $providerName = "@$provider`:$upstream via Hermes"
   $configPath = Join-Path $CodexHome "config.toml"
   if (-not (Test-Path -LiteralPath $configPath)) {
     throw "Cloud-Codex config not found: $configPath"
