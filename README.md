@@ -21,8 +21,11 @@ installations at runtime.
   attempts were removed because they can destabilize Codex.
 - Starts a local-only Responses bridge on `127.0.0.1:8655`.
 - Starts Hermes' Nous OAuth proxy on `127.0.0.1:8645` when needed.
-- Routes Codex turns through `hermes chat` by default so Hermes sessions,
+- Routes Codex turns through Hermes Agent by default so Hermes sessions,
   memory, skills, and learning are in the turn path.
+- Streams Hermes text deltas and tool callbacks through a local Responses API
+  bridge so Codex can receive live text, `function_call`, and
+  `function_call_output` events.
 - Injects an Asclepius runtime capsule into Hermes so it knows the selected
   Codex profile policy, active model route, and Windows/WSL workspace mapping.
 - Refreshes a live provider/model/price catalog from Nous and OpenRouter.
@@ -45,10 +48,10 @@ installations at runtime.
 ## Architecture
 
 The first packaged checkpoint used Hermes as an OAuth/model proxy. This source
-now routes Codex turns through Hermes Agent:
+now routes Codex turns through Hermes Agent with an Asclepius event runner:
 
 ```text
-Codex Desktop -> local Responses bridge -> hermes chat -> Hermes Agent runtime -> cloud providers
+Codex Desktop -> local Responses bridge -> WSL event runner -> Hermes Agent runtime -> cloud providers
 ```
 
 The bridge stores the Hermes session id for each Codex response id and resumes
@@ -57,6 +60,13 @@ the Hermes session when Codex sends `previous_response_id`.
 Hermes executes tools in its own WSL runtime. The Codex Desktop sandbox selector
 is visible profile intent, not a hard sandbox around Hermes tools, so the bridge
 adds that policy and workspace mapping to each Hermes turn.
+
+The event runner uses Hermes Agent's native streaming and tool callbacks. The
+Windows bridge converts those callback events into Codex-compatible Responses
+SSE events, including live text deltas, `function_call`, and
+`function_call_output` items. If the event runner is unavailable, the bridge may
+fall back to the older CLI path, which preserves answers but cannot provide the
+same live widget fidelity.
 
 Asclepius owns no chat window and does not draw a picker over Codex. Codex
 starts only after a route is selected. The visible work app is Codex Desktop.
@@ -102,9 +112,10 @@ not code injection, memory editing, or a Codex binary patch.
 Set `CODEX_CLOUD_RUNTIME_MODE=proxy` before starting the bridge to force the
 older raw model-proxy behavior for debugging.
 
-Long Hermes turns, including context compression, may not yield token deltas
-until Hermes finishes. The streaming bridge sends SSE keepalive comments during
-those waits so Codex does not look silently disconnected.
+Long Hermes turns still send SSE progress keepalives. With the event runner
+enabled, normal model text and Hermes tool callbacks stream live through the
+bridge; if a turn falls back to the CLI path, final text may arrive only after
+Hermes completes.
 
 ## Updates And Memory
 
