@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from math import ceil
 from typing import Any
 
 
@@ -428,8 +429,8 @@ def parse_hermes_output(output: str) -> tuple[str, str | None]:
     return text, session_id
 
 
-def run_hermes_turn(route: dict[str, str], body: dict[str, Any], heartbeat=None) -> tuple[str, str | None]:
-    prompt = f"{runtime_capsule(body, route)}\n\nUser/Codex request:\n{responses_body_to_prompt(body)}"
+def run_hermes_turn(route: dict[str, str], body: dict[str, Any], heartbeat=None) -> tuple[str, str | None, str]:
+    prompt = build_hermes_prompt(body, route)
     prev = body.get("previous_response_id")
     resume_session = ""
     if prev and prev in RESPONSES:
@@ -527,7 +528,7 @@ exec "${{args[@]}}"
     if completed.returncode != 0:
         message = text or completed.stdout or f"Hermes exited with code {completed.returncode}"
         raise BridgeError(message, 502, "hermes_runtime_error")
-    return text or "(Hermes returned no final text.)", session_id or resume_session or None
+    return text or "(Hermes returned no final text.)", session_id or resume_session or None, prompt
 
 
 def chat_tool_call_to_response(call: dict[str, Any]) -> dict[str, Any]:
@@ -560,6 +561,76 @@ def usage_from_chat(usage: dict[str, Any] | None) -> dict[str, int]:
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": int(usage.get("total_tokens") or input_tokens + output_tokens),
+    }
+
+
+def estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    # A conservative approximation for UI accounting when Hermes CLI does not
+    # expose upstream token usage. This intentionally overcounts a little.
+    by_chars = ceil(len(text) / 4)
+    by_words = ceil(len(re.findall(r"\S+", text)) * 1.35)
+    return max(1, by_chars, by_words)
+
+
+def build_hermes_prompt(body: dict[str, Any], route: dict[str, str]) -> str:
+    return f"{runtime_capsule(body, route)}\n\nUser/Codex request:\n{responses_body_to_prompt(body)}"
+
+
+def response_text_for_usage(response: dict[str, Any]) -> str:
+    chunks: list[str] = []
+    for item in response.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "reasoning":
+            for part in item.get("summary") or []:
+                if isinstance(part, dict):
+                    chunks.append(str(part.get("text") or ""))
+            continue
+        for part in item.get("content") or []:
+            if isinstance(part, dict):
+                chunks.append(str(part.get("text") or ""))
+    return "\n".join(chunk for chunk in chunks if chunk)
+
+
+def previous_context_tokens(body: dict[str, Any]) -> int:
+    prev = body.get("previous_response_id")
+    if prev and prev in RESPONSES:
+        stored = RESPONSES[prev]
+        try:
+            context_tokens = int(stored.get("context_tokens") or 0)
+            if context_tokens > 0:
+                return context_tokens
+        except (TypeError, ValueError):
+            pass
+        response = stored.get("response") if isinstance(stored, dict) else None
+        if isinstance(response, dict):
+            usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+            try:
+                total = int(usage.get("total_tokens") or 0)
+                if total > 0:
+                    return total
+            except (TypeError, ValueError):
+                pass
+            # Older Asclepius builds stored zero usage. Recover enough context
+            # to keep the UI meter and compaction heuristics from thinking the
+            # prior turn was empty.
+            recovered = estimate_tokens(response_text_for_usage(response))
+            if recovered > 0:
+                return recovered + 500
+    return 0
+
+
+def estimated_hermes_usage(body: dict[str, Any], prompt: str, output: str, progress: str = "") -> dict[str, int]:
+    current_input = estimate_tokens(prompt)
+    prior_context = previous_context_tokens(body)
+    input_tokens = prior_context + current_input
+    output_tokens = estimate_tokens(output) + estimate_tokens(progress)
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
     }
 
 
@@ -745,7 +816,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         rid = response_id()
         model = route["requested_model"]
         try:
-            text, hermes_session_id = run_hermes_turn(route, body)
+            text, hermes_session_id, hermes_prompt = run_hermes_turn(route, body)
         except BridgeError as exc:
             write_json(self, {"error": {"message": str(exc), "type": exc.typ}}, exc.status)
             return
@@ -754,6 +825,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
 
         output = build_message_item(text)
+        usage = estimated_hermes_usage(body, hermes_prompt, text)
         response = {
             "id": rid,
             "object": "response",
@@ -761,18 +833,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
             "status": "completed",
             "model": model,
             "output": [output],
-            "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            "usage": usage,
             "metadata": {
                 "runtime": "hermes_agent",
                 "hermes_session_id": hermes_session_id,
                 "provider": route["provider"],
                 "upstream_model": route["upstream_model"],
+                "usage_estimated": True,
             },
         }
         RESPONSES[rid] = {
             "response": response,
             "chat_history": [],
             "hermes_session_id": hermes_session_id,
+            "context_tokens": usage["total_tokens"],
         }
         save_state()
         write_json(self, response)
@@ -871,7 +945,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             def heartbeat() -> None:
                 emit_progress(f"still running; max-turn budget {HERMES_MAX_TURNS}")
 
-            text, hermes_session_id = run_hermes_turn(route, body, heartbeat=heartbeat)
+            text, hermes_session_id, hermes_prompt = run_hermes_turn(route, body, heartbeat=heartbeat)
         except BridgeError as exc:
             failed = envelope("failed")
             failed["error"] = {"message": str(exc), "type": exc.typ}
@@ -939,12 +1013,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
             "item": msg_item,
         })
         completed = envelope("completed", [reasoning_item, msg_item])
-        completed["usage"] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        usage = estimated_hermes_usage(body, hermes_prompt, text, reasoning_done)
+        completed["usage"] = usage
         completed["metadata"]["hermes_session_id"] = hermes_session_id
+        completed["metadata"]["usage_estimated"] = True
         RESPONSES[rid] = {
             "response": completed,
             "chat_history": [],
             "hermes_session_id": hermes_session_id,
+            "context_tokens": usage["total_tokens"],
         }
         save_state()
         emit("response.completed", {"type": "response.completed", "response": completed})
