@@ -112,6 +112,35 @@ function Test-DefaultCodexUntouched {
   Add-Check "default_codex_profile" ($modelLine.Line.Trim())
 }
 
+function Test-InstalledContextStatus {
+  if ($SkipInstalled) {
+    Add-Check "context_status" "skipped"
+    return
+  }
+
+  $statusPath = Join-Path $InstalledRoot "asclepius-context-status.json"
+  if (-not (Test-Path -LiteralPath $statusPath)) {
+    Add-Check "context_status" "not generated yet"
+    return
+  }
+
+  $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json
+  $notes = @($status.notes)
+  Assert-True ($notes -contains "Codex usable context window is the true window Codex enforces for the current profile and auto-compaction.") "Context status does not document Codex-usable window semantics."
+  Assert-True ($notes -contains "Hermes tool activity is parsed from Hermes Agent logs; it is not yet native Codex tool-call UI.") "Context status does not document Hermes tool activity semantics."
+
+  if ($null -ne $status.latest_thread) {
+    Assert-True ([int64]$status.latest_thread.context_window -gt 0) "Latest thread has no Codex-usable context window."
+    Assert-True ([int64]$status.latest_thread.context_tokens_used -ge 0) "Latest thread has invalid context tokens used."
+    if ($null -ne $status.latest_thread.tool_activity) {
+      Assert-True ([int64]$status.latest_thread.tool_activity.total_tool_events -ge 0) "Tool activity count is invalid."
+    }
+    Add-Check "context_status" ("{0:n0}/{1:n0} tokens" -f [int64]$status.latest_thread.context_tokens_used, [int64]$status.latest_thread.context_window)
+  } else {
+    Add-Check "context_status" "no latest thread yet"
+  }
+}
+
 function Test-Package {
   if ($SkipPackage) {
     Add-Check "package" "skipped"
@@ -215,6 +244,7 @@ Test-WindowIdentityWatcher
 Test-InstalledLauncher
 Test-Shortcut
 Test-DefaultCodexUntouched
+Test-InstalledContextStatus
 Test-Package
 Test-SecretEgress
 

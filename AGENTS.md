@@ -63,6 +63,21 @@ a wrapper that should disturb the user's normal Codex session.
 - Start the overlay only after the isolated Asclepius Codex PID/HWND is found.
   Never target the user's normal Codex session.
 
+## Context And Tool Visibility Rules
+
+- The context window shown to the user must be the Codex-usable window that
+  drives Codex UI accounting and auto-compaction, not only the provider's raw
+  model maximum.
+- Keep the generated status files authoritative for completed turns:
+  `%USERPROFILE%\.codex-nous-cloud\asclepius-context-status.md` and `.json`.
+- Hermes tool execution currently happens inside Hermes, not through Codex's
+  native tool-call widget protocol. Do not pretend otherwise.
+- Surface Hermes tool activity from Hermes logs in the Asclepius context status
+  so the model can answer what tools ran, while clearly labeling it as Hermes
+  tool activity.
+- A currently in-flight turn is not final until Hermes logs usage; do not fill
+  the context meter with guessed final values.
+
 ## Auth And Packaging Rules
 
 - The installed local profile may link or seed auth from the user's existing

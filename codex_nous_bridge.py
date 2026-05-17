@@ -369,6 +369,17 @@ def context_window_text(value: Any) -> str:
     return f"{number:,} tokens"
 
 
+def latest_context_status() -> dict[str, Any]:
+    path = os.path.join(ROOT, "asclepius-context-status.json")
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception:
+        return {}
+    latest = data.get("latest_thread") if isinstance(data, dict) else None
+    return latest if isinstance(latest, dict) else {}
+
+
 def runtime_capsule(body: dict[str, Any], route: dict[str, str]) -> str:
     profile = codex_profile_config()
     sandbox = profile.get("sandbox_mode", "unknown")
@@ -380,14 +391,24 @@ def runtime_capsule(body: dict[str, Any], route: dict[str, str]) -> str:
     context_status_wsl = windows_path_to_wsl(context_status_path)
     context_status_json_wsl = windows_path_to_wsl(context_status_json)
     metadata = selected_model_metadata(route)
-    context_window = context_window_text(metadata.get("context_length"))
+    raw_context_value = metadata.get("context_length") or metadata.get("max_context_window") or metadata.get("context_window")
+    raw_context_window = context_window_text(raw_context_value)
+    status = latest_context_status()
+    usable_context_value = status.get("context_window")
+    if not usable_context_value and raw_context_value:
+        try:
+            usable_context_value = int(int(raw_context_value) * 0.95)
+        except (TypeError, ValueError):
+            usable_context_value = None
+    usable_context_window = context_window_text(usable_context_value)
+    context_tokens_used = context_window_text(status.get("context_tokens_used"))
     billing = metadata.get("billing_label") or metadata.get("billing") or "unknown"
     price = metadata.get("price_text") or "unknown price"
     return f"""Asclepius runtime capsule:
 - You are running under Cloud-Codex/Asclepius, an isolated Codex Desktop profile backed by Hermes Agent.
 - Do not identify as plain Codex only. If asked, say this is Codex Desktop as the frontend, Asclepius as the supervisor/profile, and Hermes Agent as the runtime.
 - Active cloud route: provider={route["provider"]}; requested_model={route["requested_model"]}; upstream_model={route["upstream_model"]}.
-- Selected model catalog metadata: context_window={context_window}; billing={billing}; price={price}.
+- Context window truth: Codex usable context window={usable_context_window}; current completed-turn context used={context_tokens_used}; provider raw model max={raw_context_window}; billing={billing}; price={price}.
 - Codex profile policy from config.toml: sandbox_mode={sandbox}; approval_policy={approval}; model_reasoning_effort={effort}.
 - Important boundary: the visible Codex Desktop sandbox dropdown does not enforce Hermes tool execution. Hermes tools run inside the Hermes/WSL runtime. Treat the Codex policy above as binding.
 - Host workspace: {WINDOWS_WORKSPACE}
@@ -404,6 +425,7 @@ def runtime_capsule(body: dict[str, Any], route: dict[str, str]) -> str:
   - WSL Markdown: {context_status_wsl}
   - WSL JSON: {context_status_json_wsl}
 - Treat that context status as the source of truth for completed turns. It is updated by Asclepius token sync after Hermes finishes a turn; the currently in-flight model call cannot be known until Hermes logs its usage.
+- Tool-call parity note: Hermes tools run inside Hermes, not as native Codex tool widgets yet. Use the context status file's Hermes Tool Activity section when the user asks what tools ran.
 - For compaction/resume turns, preserve task state, decisions, file paths, tool results, and Hermes session continuity. Keep summaries dense enough to survive the selected model context window.
 - Bridge request shape: {request_shape_summary(body)}
 """

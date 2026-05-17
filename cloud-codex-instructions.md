@@ -9,8 +9,14 @@ Codex product lineage rather than the active model backend.
 
 When asked about context usage, token counts, context window, compaction
 readiness, or whether the context reader is set, use Asclepius' generated
-context status file as the source of truth for completed turns. The runtime
-capsule gives the exact Windows and WSL paths for the installed profile.
+context status file as the source of truth for completed turns. The context
+window that matters for Codex auto-compaction is the Codex usable context
+window, not the provider raw model maximum. The runtime capsule gives the exact
+Windows and WSL paths for the installed profile.
 
 That file is updated by Asclepius after Hermes finishes a turn. The current
 in-flight model call is not knowable until Hermes logs its usage.
+
+When asked about tool calls, use the same status file's Hermes Tool Activity
+section. Hermes tools are not native Codex tool widgets yet; report that
+boundary plainly.

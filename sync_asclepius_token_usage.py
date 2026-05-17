@@ -30,6 +30,13 @@ API_RE = re.compile(
     r".*?\bin=(?P<input>\d+)\s+out=(?P<output>\d+)\s+total=(?P<total>\d+)"
     r"(?:.*?\bcache=(?P<cache_read>\d+)/(?P<cache_prompt>\d+))?"
 )
+TOOL_RE = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),(?P<ms>\d{3}) "
+    r"(?P<level>INFO|WARNING|ERROR) \[(?P<session>[^\]]+)\] "
+    r"run_agent: (?:tool|Tool) (?P<tool>[A-Za-z0-9_.-]+) "
+    r"(?P<status>completed|returned error) \((?P<duration>[^),]+)"
+    r"(?:,\s*(?P<chars>\d+)\s*chars)?\)(?::\s*(?P<detail>.*))?"
+)
 
 
 @dataclass
@@ -51,6 +58,17 @@ class TurnUsage:
     reasoning_output_tokens: int
     total_tokens: int
     session_id: str
+
+
+@dataclass
+class ToolEvent:
+    epoch: float
+    session_id: str
+    tool: str
+    status: str
+    duration: str
+    output_chars: int | None
+    detail: str | None
 
 
 def parse_local_log_time(value: str, ms: str) -> float:
@@ -82,6 +100,33 @@ def read_api_calls(log_path: Path) -> list[ApiCall]:
     except OSError:
         return []
     return calls
+
+
+def read_tool_events(log_path: Path) -> list[ToolEvent]:
+    if not log_path.exists():
+        return []
+    events: list[ToolEvent] = []
+    try:
+        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                match = TOOL_RE.search(line)
+                if not match:
+                    continue
+                chars = match.group("chars")
+                events.append(
+                    ToolEvent(
+                        epoch=parse_local_log_time(match.group("ts"), match.group("ms")),
+                        session_id=match.group("session"),
+                        tool=match.group("tool"),
+                        status="error" if match.group("status") == "returned error" else "completed",
+                        duration=match.group("duration"),
+                        output_chars=int(chars) if chars else None,
+                        detail=(match.group("detail") or "").strip() or None,
+                    )
+                )
+    except OSError:
+        return []
+    return events
 
 
 def hermes_log_path(distro: str) -> Path:
@@ -468,8 +513,47 @@ def load_thread_metadata(codex_home: Path) -> dict[str, dict[str, Any]]:
         con.close()
 
 
-def write_context_status(root: Path, contexts: list[dict[str, Any]], codex_home: Path) -> None:
+def load_provider_context_windows(root: Path) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for name in ("cloud-models.json", "codex-model-catalog.json"):
+        path = root / name
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        models = data.get("models") if isinstance(data, dict) else data
+        if not isinstance(models, list):
+            continue
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            slug = str(model.get("slug") or model.get("id") or "")
+            if not slug:
+                continue
+            value = (
+                model.get("context_length")
+                or model.get("max_context_window")
+                or model.get("context_window")
+            )
+            try:
+                number = int(value)
+            except (TypeError, ValueError):
+                continue
+            if number > 0:
+                out[slug] = max(out.get(slug, 0), number)
+    return out
+
+
+def write_context_status(
+    root: Path,
+    contexts: list[dict[str, Any]],
+    codex_home: Path,
+    tool_events: list[ToolEvent],
+) -> None:
     thread_meta = load_thread_metadata(codex_home)
+    provider_context_windows = load_provider_context_windows(root)
     enriched: list[dict[str, Any]] = []
     for context in contexts:
         item = dict(context)
@@ -482,6 +566,9 @@ def write_context_status(root: Path, contexts: list[dict[str, Any]], codex_home:
             item["reasoning_effort"] = meta.get("reasoning_effort")
             item["tokens_used_row"] = meta.get("tokens_used")
             item["thread_updated_at"] = meta.get("updated_at")
+        model_slug = str(item.get("model") or "")
+        if model_slug and provider_context_windows.get(model_slug):
+            item["provider_raw_context_window"] = provider_context_windows[model_slug]
         enriched.append(item)
 
     def sort_key(item: dict[str, Any]) -> tuple[float, float]:
@@ -497,13 +584,37 @@ def write_context_status(root: Path, contexts: list[dict[str, Any]], codex_home:
         return (max(updated, mtime), mtime)
 
     latest = max(enriched, key=sort_key) if enriched else None
+    if latest and latest.get("hermes_session_id"):
+        session_tools = [
+            event for event in tool_events
+            if event.session_id == latest.get("hermes_session_id")
+        ]
+        latest["tool_activity"] = {
+            "session_id": latest.get("hermes_session_id"),
+            "total_tool_events": len(session_tools),
+            "error_tool_events": sum(1 for event in session_tools if event.status == "error"),
+            "events": [
+                {
+                    "time": datetime.fromtimestamp(event.epoch, timezone.utc).isoformat(timespec="seconds"),
+                    "tool": event.tool,
+                    "status": event.status,
+                    "duration": event.duration,
+                    "output_chars": event.output_chars,
+                    "detail": event.detail,
+                }
+                for event in sorted(session_tools, key=lambda item: item.epoch)[-25:]
+            ],
+        }
     generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     status = {
         "generated_at": generated_at,
         "source": "asclepius_token_sync",
         "notes": [
             "Use this file as the Asclepius context/token source of truth.",
-            "It is updated after completed Hermes turns; an in-flight model call is not knowable until Hermes logs usage.",
+            "Codex usable context window is the true window Codex enforces for the current profile and auto-compaction.",
+            "Provider raw context window is the upstream model maximum before Codex reserves headroom.",
+            "Hermes tool activity is parsed from Hermes Agent logs; it is not yet native Codex tool-call UI.",
+            "It is updated after completed Hermes turns; an in-flight model call is not final until Hermes logs usage.",
             "Counts come from Hermes Agent provider usage logs and Codex's isolated rollout state.",
         ],
         "latest_thread": latest,
@@ -518,6 +629,7 @@ def write_context_status(root: Path, contexts: list[dict[str, Any]], codex_home:
     if latest:
         usage = latest.get("total_token_usage") or {}
         context_window = latest.get("context_window") or 0
+        provider_context_window = latest.get("provider_raw_context_window") or 0
         context_used = int(latest.get("context_tokens_used") or 0)
         cumulative_used = int(latest.get("session_cumulative_tokens") or usage.get("total_tokens") or 0)
         remaining = latest.get("remaining_tokens")
@@ -538,7 +650,8 @@ def write_context_status(root: Path, contexts: list[dict[str, Any]], codex_home:
             f"- Model: {latest.get('model') or 'unknown'}",
             f"- Hermes session: {latest.get('hermes_session_id') or 'unknown'}",
             f"- Usage source: {latest.get('usage_source') or 'unknown'}",
-            f"- Context window: {context_window:,} tokens" if context_window else "- Context window: unknown",
+            f"- Codex usable context window: {context_window:,} tokens" if context_window else "- Codex usable context window: unknown",
+            f"- Provider raw context window: {provider_context_window:,} tokens" if provider_context_window else "- Provider raw context window: unknown",
             f"- Context tokens used: {context_used:,}",
             f"- Tokens remaining: {int(remaining):,}" if remaining is not None else "- Tokens remaining: unknown",
             f"- Percent used: {percent}%" if percent is not None else "- Percent used: unknown",
@@ -551,6 +664,22 @@ def write_context_status(root: Path, contexts: list[dict[str, Any]], codex_home:
             f"- Output tokens: {int((latest.get('last_token_usage') or {}).get('output_tokens') or 0):,}",
             f"- Reasoning output tokens: {int((latest.get('last_token_usage') or {}).get('reasoning_output_tokens') or 0):,}",
         ]
+        tool_activity = latest.get("tool_activity") or {}
+        tool_events_md = tool_activity.get("events") or []
+        lines.extend([
+            "",
+            "## Hermes Tool Activity",
+            "",
+            f"- Tool events: {int(tool_activity.get('total_tool_events') or 0):,}",
+            f"- Tool errors: {int(tool_activity.get('error_tool_events') or 0):,}",
+        ])
+        for event in tool_events_md[-10:]:
+            detail = f" ({event.get('detail')})" if event.get("detail") else ""
+            chars = event.get("output_chars")
+            chars_text = f", {int(chars):,} chars" if chars is not None else ""
+            lines.append(
+                f"- {event.get('tool')}: {event.get('status')} in {event.get('duration')}{chars_text}{detail}"
+            )
     else:
         lines = [
             "# Asclepius Context Status",
@@ -569,7 +698,9 @@ def scan_once(root: Path, distro: str) -> dict[str, int]:
     if not sessions_dir.exists():
         return {"rollouts_changed": 0, "threads_changed": 0}
 
-    calls = read_api_calls(hermes_log_path(distro))
+    log_path = hermes_log_path(distro)
+    calls = read_api_calls(log_path)
+    tool_events = read_tool_events(log_path)
     totals: dict[str, int] = {}
     contexts: list[dict[str, Any]] = []
     rollouts_changed = 0
@@ -583,7 +714,7 @@ def scan_once(root: Path, distro: str) -> dict[str, int]:
         if context is not None:
             contexts.append(context)
     threads_changed = sync_threads_db(codex_home, totals)
-    write_context_status(root, contexts, codex_home)
+    write_context_status(root, contexts, codex_home, tool_events)
     return {"rollouts_changed": rollouts_changed, "threads_changed": threads_changed}
 
 
