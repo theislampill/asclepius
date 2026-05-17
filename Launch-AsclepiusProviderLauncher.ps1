@@ -1,6 +1,9 @@
 param(
   [switch]$UiSmoke,
-  [int]$SmokeSeconds = 1
+  [int]$SmokeSeconds = 1,
+  [switch]$LaunchSmoke,
+  [string]$SmokeModel = "nous/deepseek/deepseek-v4-flash",
+  [int]$LaunchSmokeDelaySeconds = 1
 )
 
 $ErrorActionPreference = "Stop"
@@ -1030,6 +1033,26 @@ $script:Window.Add_Loaded({
     $script:SmokeTimer.Interval = [TimeSpan]::FromSeconds($SmokeSeconds)
     $script:SmokeTimer.Add_Tick({
       $script:SmokeTimer.Stop()
+      $script:Window.Close()
+    })
+    $script:SmokeTimer.Start()
+  } elseif ($LaunchSmoke) {
+    Populate-Models -ForceRefresh
+    if (-not [string]::IsNullOrWhiteSpace($SmokeModel)) {
+      $match = @($script:AllModels | Where-Object { [string]$_.slug -eq $SmokeModel } | Select-Object -First 1)
+      if ($match.Count -gt 0) {
+        $script:RouteCombo.SelectedItem = $match[0]
+      }
+    }
+    Set-Status "Launch smoke ready."
+    $script:SmokeTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $script:SmokeTimer.Interval = [TimeSpan]::FromSeconds($LaunchSmokeDelaySeconds)
+    $script:SmokeTimer.Add_Tick({
+      $script:SmokeTimer.Stop()
+      $m = Get-SelectedModel
+      if ($m) {
+        Launch-CloudCodex -Model ([string]$m.slug)
+      }
       $script:Window.Close()
     })
     $script:SmokeTimer.Start()

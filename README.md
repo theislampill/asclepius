@@ -14,11 +14,11 @@ installations at runtime.
 - Keeps the default Codex profile untouched.
 - Creates an isolated Codex home under `%USERPROFILE%\.codex-nous-cloud`.
 - Adds a desktop launcher named `asclepius.lnk` that runs
-  `Launch-AsclepiusProviderLauncher.vbs`, shows a standalone Asclepius
-  provider/portal preflight screen, then opens the real Codex Desktop
-  executable with Hermes underneath.
-- Does not install an `Asclepius.exe` host. Earlier window-parenting host
-  attempts were removed because they can destabilize Codex.
+  `Asclepius.exe`, shows a standalone Asclepius provider/portal preflight
+  screen, then opens the real Codex Desktop executable with Hermes underneath.
+- Includes an auditable `Asclepius.exe` bootstrapper. It is only a GUI launcher
+  for the provider preflight script; it does not host, embed, inject into,
+  repackage, or patch Codex.
 - Starts a local-only Responses bridge on `127.0.0.1:8655`.
 - Starts Hermes' Nous OAuth proxy on `127.0.0.1:8645` when needed.
 - Routes Codex turns through Hermes Agent by default so Hermes sessions,
@@ -70,7 +70,8 @@ same live widget fidelity.
 
 Asclepius owns no chat window and does not draw a picker over Codex. Codex
 starts only after a route is selected. The visible work app is Codex Desktop.
-This package does not modify, embed, or repackage Codex Desktop.
+This package does not modify, embed, or repackage Codex Desktop. `Asclepius.exe`
+is a small launcher for the provider picker, not a Codex replacement.
 
 When Codex launches through Asclepius, a hidden window-identity watcher targets
 only the fresh Codex PID/HWND created by that launch. It keeps the window title
@@ -155,6 +156,12 @@ Then open `asclepius.lnk` from the desktop. It opens the Asclepius provider
 preflight screen first. After you choose a route, it launches the real signed
 Codex Desktop app with the isolated Hermes-backed config.
 
+You can also run the installed launcher directly:
+
+```powershell
+%USERPROFILE%\.codex-nous-cloud\Asclepius.exe
+```
+
 If Nous OAuth login is needed, run:
 
 ```powershell
@@ -196,9 +203,16 @@ Use `-SkipInstalled` for source/package-only checks before installation.
 The smoke harness also scans the redistributable package for auth files,
 credential stores, tokens, cookies, private keys, and common API-key formats.
 
-To run the opt-in identity smoke that opens a fresh isolated Codex window and
-labels only that new window as Asclepius:
+To run the opt-in identity smoke that opens a fresh isolated Codex window,
+labels only that new window as Asclepius, and verifies Alt-Tab/AppUserModelID
+repair:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start-AsclepiusCodexIdentitySmoke.ps1
+```
+
+To smoke the full `.exe -> provider launcher -> real Codex` path:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Start-AsclepiusCodexIdentitySmoke.ps1 -ViaAsclepiusExe
 ```

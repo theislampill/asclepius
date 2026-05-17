@@ -6,6 +6,9 @@ $ElectronUserData = Join-Path $Root "electron-user-data"
 $DesktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "asclepius.lnk"
 
 $required = @(
+  "Asclepius.exe",
+  "AsclepiusLauncher.cs",
+  "Build-AsclepiusLauncher.ps1",
   "Test-Asclepius.ps1",
   "Install-AsclepiusDependency.ps1",
   "codex_nous_bridge.py",
@@ -32,6 +35,15 @@ $required = @(
   "cloud-codex-instructions.md"
 )
 
+$sourceExe = Join-Path $Source "Asclepius.exe"
+if (-not (Test-Path -LiteralPath $sourceExe)) {
+  $buildScript = Join-Path $Source "Build-AsclepiusLauncher.ps1"
+  if (-not (Test-Path -LiteralPath $buildScript)) {
+    throw "Asclepius.exe is missing and the launcher build script is not available."
+  }
+  & $buildScript -OutputPath $sourceExe | Out-Null
+}
+
 foreach ($name in $required) {
   $path = Join-Path $Source $name
   if (-not (Test-Path -LiteralPath $path)) {
@@ -44,7 +56,6 @@ foreach ($name in $required) {
   Copy-Item -LiteralPath (Join-Path $Source $name) -Destination $Root -Force
 }
 
-Remove-Item -LiteralPath (Join-Path $Root "Asclepius.exe") -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $Root "AsclepiusHost.cs") -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $Root "Build-AsclepiusHost.ps1") -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $Root "AsclepiusApp.cs") -Force -ErrorAction SilentlyContinue
@@ -94,20 +105,11 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 $wsh = New-Object -ComObject WScript.Shell
 $shortcut = $wsh.CreateShortcut($DesktopShortcut)
-$shortcut.TargetPath = "wscript.exe"
-$shortcut.Arguments = "`"$Root\Launch-AsclepiusProviderLauncher.vbs`""
+$shortcut.TargetPath = "$Root\Asclepius.exe"
+$shortcut.Arguments = ""
 $shortcut.WorkingDirectory = $Root
 $shortcut.Description = "Choose an Asclepius provider route, then launch real Codex Desktop with Hermes underneath"
-
-$codexExe = $null
-try {
-  $codexExe = (Resolve-Path "C:\Program Files\WindowsApps\OpenAI.Codex_*\app\Codex.exe" -ErrorAction Stop |
-    Sort-Object Path -Descending |
-    Select-Object -First 1).Path
-} catch {}
-if ($codexExe) {
-  $shortcut.IconLocation = "$codexExe,0"
-}
+$shortcut.IconLocation = "$Root\Asclepius.exe,0"
 $shortcut.Save()
 
 try {
@@ -120,6 +122,6 @@ try {
 Write-Output "Installed to $Root"
 Write-Output "Isolated CODEX_HOME: $CodexHome"
 Write-Output "Desktop shortcut: $DesktopShortcut"
-Write-Output "Shortcut opens the Asclepius provider launcher through Launch-AsclepiusProviderLauncher.vbs."
+Write-Output "Shortcut opens Asclepius.exe, which starts the provider launcher without a terminal window."
 Write-Output "Catalog auto-refresh: $refreshMode"
 Write-Output "No Codex binaries, credentials, logs, or Electron state were copied from this package."

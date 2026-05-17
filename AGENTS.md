@@ -38,7 +38,10 @@ a wrapper that should disturb the user's normal Codex session.
 
 ## Provider Launcher Rules
 
-- `asclepius.lnk` opens `Launch-AsclepiusProviderLauncher.vbs`.
+- `asclepius.lnk` opens `Asclepius.exe`.
+- `Asclepius.exe` is a tiny GUI bootstrapper for
+  `Launch-AsclepiusProviderLauncher.ps1`. It must not host, embed, inject into,
+  repackage, memory-edit, or visually fake Codex.
 - The provider launcher is a preflight screen. Real Codex should not open until
   the user chooses a provider/model route and clicks launch.
 - The provider launcher should look Codex-adjacent, not like legacy Windows UI:
@@ -94,6 +97,8 @@ a wrapper that should disturb the user's normal Codex session.
 ## Smoke Checklist
 
 - Run syntax checks and `Test-Asclepius.ps1` after launcher or identity changes.
+- For `.exe` changes, also run
+  `Start-AsclepiusCodexIdentitySmoke.ps1 -ViaAsclepiusExe` before publishing.
 - For live identity smoke, launch or focus only the isolated Asclepius profile,
   then verify:
   - Asclepius Codex root PID title is `Asclepius`.

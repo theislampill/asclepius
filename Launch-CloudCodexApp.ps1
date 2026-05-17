@@ -8,8 +8,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$CodexHome = Join-Path $Root "codex-home"
-$ElectronUserData = Join-Path $Root "electron-user-data"
+$CodexHome = if ($env:ASCLEPIUS_CODEX_HOME_OVERRIDE) {
+  $env:ASCLEPIUS_CODEX_HOME_OVERRIDE
+} else {
+  Join-Path $Root "codex-home"
+}
+$ElectronUserData = if ($env:ASCLEPIUS_ELECTRON_USER_DATA_OVERRIDE) {
+  $env:ASCLEPIUS_ELECTRON_USER_DATA_OVERRIDE
+} else {
+  Join-Path $Root "electron-user-data"
+}
 $CloudModelsPath = Join-Path $Root "cloud-models.json"
 $InstructionsPath = Join-Path $Root "cloud-codex-instructions.md"
 $WindowIdentityProbe = Join-Path $Root "Test-AsclepiusWindowIdentity.ps1"

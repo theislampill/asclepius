@@ -46,6 +46,17 @@ function Test-PythonBridge {
   Add-Check "python_bridge" "bridge, event runner, and token sync"
 }
 
+function Test-AsclepiusLauncherExe {
+  $buildScript = Join-Path $Root "Build-AsclepiusLauncher.ps1"
+  Assert-True (Test-Path -LiteralPath $buildScript) "Asclepius launcher build script not found: $buildScript"
+  $exe = Join-Path $Root "Asclepius.exe"
+  & $buildScript -OutputPath $exe | Out-Null
+  Assert-True (Test-Path -LiteralPath $exe) "Asclepius.exe was not built."
+  $proc = Start-Process -FilePath $exe -ArgumentList @("--self-test") -WorkingDirectory $Root -WindowStyle Hidden -Wait -PassThru
+  Assert-True ($proc.ExitCode -eq 0) "Asclepius.exe self-test failed with exit code $($proc.ExitCode)."
+  Add-Check "asclepius_exe" $exe
+}
+
 function Test-WindowIdentityProbe {
   $probe = Join-Path $Root "Test-AsclepiusWindowIdentity.ps1"
   Assert-True (Test-Path -LiteralPath $probe) "Window identity probe script not found: $probe"
@@ -75,8 +86,11 @@ function Test-InstalledLauncher {
   }
 
   $script = Join-Path $InstalledRoot "Launch-CloudCodexApp.ps1"
+  $exe = Join-Path $InstalledRoot "Asclepius.exe"
   Assert-True (Test-Path -LiteralPath $script) "Installed real-Codex launcher not found: $script"
-  Assert-True (-not (Test-Path -LiteralPath (Join-Path $InstalledRoot "Asclepius.exe"))) "Unsafe Asclepius host exe is still installed."
+  Assert-True (Test-Path -LiteralPath $exe) "Installed Asclepius.exe not found: $exe"
+  $proc = Start-Process -FilePath $exe -ArgumentList @("--self-test") -WorkingDirectory $InstalledRoot -WindowStyle Hidden -Wait -PassThru
+  Assert-True ($proc.ExitCode -eq 0) "Installed Asclepius.exe self-test failed with exit code $($proc.ExitCode)."
   $dryRun = & $script -DryRun
   if ($LASTEXITCODE -ne 0) {
     throw "Real-Codex launcher dry-run failed."
@@ -84,6 +98,7 @@ function Test-InstalledLauncher {
   Assert-True ($dryRun.CodexDesktopExe -like "*Codex.exe") "Dry-run did not resolve the real Codex Desktop executable."
   Assert-True ($dryRun.CodexHome -like "*\.codex-nous-cloud\codex-home") "Dry-run did not use the isolated Asclepius Codex home."
   Add-Check "installed_launcher" $dryRun.CodexDesktopExe
+  Add-Check "installed_exe" $exe
   Add-Check "installed_desktop_auth" $dryRun.DesktopAuthMode
 }
 
@@ -99,8 +114,8 @@ function Test-Shortcut {
   $shortcut = $wsh.CreateShortcut($shortcutPath)
   $target = $shortcut.TargetPath
   Assert-True (Test-Path -LiteralPath $target) "Shortcut target does not exist: $target"
-  Assert-True ($target -match 'wscript\.exe$') "Shortcut target is $target, not the safe VBS launcher host."
-  Assert-True ($shortcut.Arguments -like "*Launch-AsclepiusProviderLauncher.vbs*") "Shortcut does not launch the Asclepius provider launcher VBS."
+  Assert-True ($target.EndsWith("\Asclepius.exe", [System.StringComparison]::OrdinalIgnoreCase)) "Shortcut target is $target, not Asclepius.exe."
+  Assert-True ([string]::IsNullOrWhiteSpace($shortcut.Arguments)) "Asclepius.exe shortcut should not need arguments."
   Add-Check "desktop_shortcut" ("{0} {1}" -f $target, $shortcut.Arguments)
 }
 
@@ -164,7 +179,7 @@ function Test-Package {
     $archive.Dispose()
   }
 
-  foreach ($required in @("Launch-AsclepiusProviderLauncher.ps1", "Launch-AsclepiusProviderLauncher.vbs", "Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Launch-CloudCodexModelPicker.ps1", "Launch-CloudCodexModelPicker.vbs", "Test-Asclepius.ps1", "Test-AsclepiusWindowIdentity.ps1", "Start-AsclepiusWindowIdentityWatcher.ps1", "Start-AsclepiusHermesTitlebarOverlay.ps1", "Start-AsclepiusCodexIdentitySmoke.ps1", "Get-AsclepiusHermesStatus.ps1", "asclepius_hermes_event_runner.py", "sync_asclepius_token_usage.py")) {
+  foreach ($required in @("Asclepius.exe", "AsclepiusLauncher.cs", "Build-AsclepiusLauncher.ps1", "Launch-AsclepiusProviderLauncher.ps1", "Launch-AsclepiusProviderLauncher.vbs", "Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Launch-CloudCodexModelPicker.ps1", "Launch-CloudCodexModelPicker.vbs", "Test-Asclepius.ps1", "Test-AsclepiusWindowIdentity.ps1", "Start-AsclepiusWindowIdentityWatcher.ps1", "Start-AsclepiusHermesTitlebarOverlay.ps1", "Start-AsclepiusCodexIdentitySmoke.ps1", "Get-AsclepiusHermesStatus.ps1", "asclepius_hermes_event_runner.py", "sync_asclepius_token_usage.py")) {
     Assert-True ($entries -contains $required) "Package missing $required"
   }
 
@@ -173,7 +188,7 @@ function Test-Package {
   }
 
   $forbidden = $entries | Where-Object {
-    $_ -match '\.exe$' -or
+    ($_ -match '\.exe$' -and $_ -ne "Asclepius.exe") -or
     $_ -match '(^|/)asclepius-.*smoke\.json$' -or
     $_ -match '(^|/)bridge-state\.json' -or
     $_ -match '(^|/)cloud-secrets\.json' -or
@@ -242,6 +257,7 @@ function Test-SecretEgress {
 
 Test-PowerShellSyntax
 Test-PythonBridge
+Test-AsclepiusLauncherExe
 Test-WindowIdentityProbe
 Test-WindowIdentityWatcher
 Test-InstalledLauncher

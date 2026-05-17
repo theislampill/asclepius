@@ -4,6 +4,7 @@ param(
   [string]$AppUserModelId = "NousResearch.Asclepius.Codex",
   [string]$WindowTitle = "Asclepius",
   [int]$TimeoutSeconds = 60,
+  [switch]$ViaAsclepiusExe,
   [switch]$CloseWhenDone
 )
 
@@ -11,6 +12,8 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProbeScript = Join-Path $Root "Test-AsclepiusWindowIdentity.ps1"
 $WatcherScript = Join-Path $Root "Start-AsclepiusWindowIdentityWatcher.ps1"
+$BuildLauncherScript = Join-Path $Root "Build-AsclepiusLauncher.ps1"
+$AsclepiusExe = Join-Path $Root "Asclepius.exe"
 
 function Get-CodexProcessSnapshot {
   $rows = @()
@@ -156,6 +159,12 @@ if (-not (Test-Path -LiteralPath $ProbeScript)) {
 if (-not (Test-Path -LiteralPath $WatcherScript)) {
   throw "Window identity watcher script not found: $WatcherScript"
 }
+if ($ViaAsclepiusExe -and -not (Test-Path -LiteralPath $AsclepiusExe)) {
+  if (-not (Test-Path -LiteralPath $BuildLauncherScript)) {
+    throw "Asclepius.exe is missing and the launcher build script is not available."
+  }
+  & $BuildLauncherScript -OutputPath $AsclepiusExe | Out-Null
+}
 
 $before = @(Get-CodexProcessSnapshot)
 $codexExe = Find-CodexDesktopExe
@@ -173,8 +182,18 @@ $env:CODEX_HOME = $codexHome
 $env:CODEX_ELECTRON_USER_DATA_PATH = $electronUserData
 $env:CODEX_CLOUD_WORKSPACE = $Workspace
 $env:CODEX_HERMES_WORKDIR = ConvertTo-WslPath -Path $Workspace
+$env:ASCLEPIUS_CODEX_HOME_OVERRIDE = $codexHome
+$env:ASCLEPIUS_ELECTRON_USER_DATA_OVERRIDE = $electronUserData
 
-$started = Start-Process -FilePath $codexExe -ArgumentList @("--open-project", $Workspace) -WorkingDirectory $Workspace -PassThru
+if ($ViaAsclepiusExe) {
+  $started = Start-Process -FilePath $AsclepiusExe -ArgumentList @(
+    "-LaunchSmoke",
+    "-SmokeModel", $Model,
+    "-LaunchSmokeDelaySeconds", "1"
+  ) -WorkingDirectory $Root -PassThru
+} else {
+  $started = Start-Process -FilePath $codexExe -ArgumentList @("--open-project", $Workspace) -WorkingDirectory $Workspace -PassThru
+}
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 $target = Wait-ForFreshCodexWindow -Before $before -Deadline $deadline
 
@@ -231,6 +250,7 @@ $result = [pscustomobject]@{
   ok = ($verifyRow.ok -eq $true -and $verifyRow.visible_branded_count -gt 0)
   touched_existing_codex = $false
   started_process_id = $started.Id
+  launch_path = if ($ViaAsclepiusExe) { $AsclepiusExe } else { $codexExe }
   target_process_id = $target.Id
   target_hwnd = $verifyRow.hwnd
   target_window_count = $verifyRow.window_count

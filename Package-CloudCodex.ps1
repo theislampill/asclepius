@@ -26,6 +26,8 @@ try {
     Copy-Item -LiteralPath $src -Destination $dst -Force
   }
 
+  & (Join-Path $Root "Build-AsclepiusLauncher.ps1") -OutputPath (Join-Path $Stage "Asclepius.exe") | Out-Null
+
   if (Test-Path -LiteralPath $PackagePath) {
     Remove-Item -LiteralPath $PackagePath -Force
   }
