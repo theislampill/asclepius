@@ -17,6 +17,7 @@ Windows and WSL paths for the installed profile.
 That file is updated by Asclepius after Hermes finishes a turn. The current
 in-flight model call is not knowable until Hermes logs its usage.
 
-When asked about tool calls, use the same status file's Hermes Tool Activity
-section. Hermes tools are not native Codex tool widgets yet; report that
-boundary plainly.
+When asked about tool calls, prefer the live Codex tool widgets when present.
+For completed-turn audit, use the same status file's Hermes Tool Activity
+section. If widgets are absent, say the Hermes event runner may be unavailable
+or the turn used the CLI fallback.

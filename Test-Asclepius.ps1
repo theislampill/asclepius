@@ -36,11 +36,14 @@ function Test-PythonBridge {
     return
   }
 
-  & $python.Source -m py_compile (Join-Path $Root "codex_nous_bridge.py") (Join-Path $Root "sync_asclepius_token_usage.py")
+  & $python.Source -m py_compile `
+    (Join-Path $Root "codex_nous_bridge.py") `
+    (Join-Path $Root "sync_asclepius_token_usage.py") `
+    (Join-Path $Root "asclepius_hermes_event_runner.py")
   if ($LASTEXITCODE -ne 0) {
     throw "Python bridge compile failed."
   }
-  Add-Check "python_bridge" "bridge and token sync"
+  Add-Check "python_bridge" "bridge, event runner, and token sync"
 }
 
 function Test-WindowIdentityProbe {
@@ -161,7 +164,7 @@ function Test-Package {
     $archive.Dispose()
   }
 
-  foreach ($required in @("Launch-AsclepiusProviderLauncher.ps1", "Launch-AsclepiusProviderLauncher.vbs", "Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Launch-CloudCodexModelPicker.ps1", "Launch-CloudCodexModelPicker.vbs", "Test-Asclepius.ps1", "Test-AsclepiusWindowIdentity.ps1", "Start-AsclepiusWindowIdentityWatcher.ps1", "Start-AsclepiusHermesTitlebarOverlay.ps1", "Start-AsclepiusCodexIdentitySmoke.ps1", "Get-AsclepiusHermesStatus.ps1", "sync_asclepius_token_usage.py")) {
+  foreach ($required in @("Launch-AsclepiusProviderLauncher.ps1", "Launch-AsclepiusProviderLauncher.vbs", "Launch-CloudCodexApp.ps1", "Launch-CloudCodexApp.vbs", "Launch-CloudCodexModelPicker.ps1", "Launch-CloudCodexModelPicker.vbs", "Test-Asclepius.ps1", "Test-AsclepiusWindowIdentity.ps1", "Start-AsclepiusWindowIdentityWatcher.ps1", "Start-AsclepiusHermesTitlebarOverlay.ps1", "Start-AsclepiusCodexIdentitySmoke.ps1", "Get-AsclepiusHermesStatus.ps1", "asclepius_hermes_event_runner.py", "sync_asclepius_token_usage.py")) {
     Assert-True ($entries -contains $required) "Package missing $required"
   }
 

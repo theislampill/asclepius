@@ -70,11 +70,14 @@ a wrapper that should disturb the user's normal Codex session.
   model maximum.
 - Keep the generated status files authoritative for completed turns:
   `%USERPROFILE%\.codex-nous-cloud\asclepius-context-status.md` and `.json`.
-- Hermes tool execution currently happens inside Hermes, not through Codex's
-  native tool-call widget protocol. Do not pretend otherwise.
+- Hermes tool execution happens inside Hermes. When
+  `asclepius_hermes_event_runner.py` is enabled, the Windows bridge translates
+  Hermes callback events into Codex-compatible `function_call` /
+  `function_call_output` stream items.
+- If the event runner is unavailable or fails, the bridge may fall back to the
+  old CLI path. In that path, do not pretend native live widgets are present.
 - Surface Hermes tool activity from Hermes logs in the Asclepius context status
-  so the model can answer what tools ran, while clearly labeling it as Hermes
-  tool activity.
+  so the model can answer what tools ran after completion.
 - A currently in-flight turn is not final until Hermes logs usage; do not fill
   the context meter with guessed final values.
 
@@ -105,3 +108,7 @@ a wrapper that should disturb the user's normal Codex session.
 - Do not pipe directly after complex `foreach` blocks; assign to `$rows` first.
 - `Add-Type` needs `-TypeDefinition`; do not pipe a here-string into it.
 - Here-strings must have opening and closing markers alone on their own lines.
+- Do not run multiple WSL/Hermes probes in parallel. WSL has produced
+  `Wsl/Service/E_UNEXPECTED` and timeout failures under concurrent probes, so
+  keep WSL reads/smokes sequential even when other local PowerShell reads can
+  run in parallel.

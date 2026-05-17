@@ -11,10 +11,12 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import queue
 import re
 import shlex
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 import urllib.error
@@ -47,6 +49,7 @@ STATE_PATH = os.environ.get("CODEX_CLOUD_STATE_PATH", os.path.join(ROOT, "bridge
 DEFAULT_MODEL = os.environ.get("CODEX_NOUS_DEFAULT_MODEL", "nous/deepseek/deepseek-v4-flash")
 RUNTIME_MODE = os.environ.get("CODEX_CLOUD_RUNTIME_MODE", "hermes_agent").strip().lower()
 HERMES_BIN = os.environ.get("CODEX_HERMES_BIN", "/home/agent/.local/bin/hermes")
+HERMES_PYTHON = os.environ.get("CODEX_HERMES_PYTHON", "/home/agent/.hermes/hermes-agent/venv/bin/python3")
 HERMES_WSL_DISTRO = os.environ.get("CODEX_HERMES_WSL_DISTRO", "Ubuntu")
 WINDOWS_WORKSPACE = os.environ.get("CODEX_CLOUD_WORKSPACE", r"C:\workspace\ai")
 HERMES_WORKDIR = os.environ.get("CODEX_HERMES_WORKDIR", windows_path_to_wsl(WINDOWS_WORKSPACE))
@@ -54,6 +57,12 @@ HERMES_TIMEOUT_SECONDS = int(os.environ.get("CODEX_HERMES_TIMEOUT_SECONDS", "600
 HERMES_HEARTBEAT_SECONDS = int(os.environ.get("CODEX_HERMES_HEARTBEAT_SECONDS", "15"))
 HERMES_MAX_TURNS = int(os.environ.get("CODEX_HERMES_MAX_TURNS", "45"))
 HERMES_PROGRESS_WORDS = os.environ.get("CODEX_HERMES_PROGRESS_WORDS", "1").strip().lower() not in {"0", "false", "no"}
+HERMES_EVENT_RUNNER = os.environ.get("CODEX_HERMES_EVENT_RUNNER", "1").strip().lower() not in {"0", "false", "no"}
+HERMES_EVENT_RUNNER_PATH = os.environ.get(
+    "CODEX_HERMES_EVENT_RUNNER_PATH",
+    os.path.join(ROOT, "asclepius_hermes_event_runner.py"),
+)
+HERMES_TOOL_OUTPUT_LIMIT = int(os.environ.get("CODEX_HERMES_TOOL_OUTPUT_LIMIT", "20000"))
 
 RESPONSES: dict[str, dict[str, Any]] = {}
 
@@ -425,7 +434,7 @@ def runtime_capsule(body: dict[str, Any], route: dict[str, str]) -> str:
   - WSL Markdown: {context_status_wsl}
   - WSL JSON: {context_status_json_wsl}
 - Treat that context status as the source of truth for completed turns. It is updated by Asclepius token sync after Hermes finishes a turn; the currently in-flight model call cannot be known until Hermes logs its usage.
-- Tool-call parity note: Hermes tools run inside Hermes, not as native Codex tool widgets yet. Use the context status file's Hermes Tool Activity section when the user asks what tools ran.
+- Tool-call parity note: Asclepius streams Hermes callback tool events into Codex-compatible function_call/function_call_output items when the event runner is enabled. The generated context status remains the completed-turn audit log.
 - For compaction/resume turns, preserve task state, decisions, file paths, tool results, and Hermes session continuity. Keep summaries dense enough to survive the selected model context window.
 - Bridge request shape: {request_shape_summary(body)}
 """
@@ -561,6 +570,154 @@ exec "${{args[@]}}"
         message = text or completed.stdout or f"Hermes exited with code {completed.returncode}"
         raise BridgeError(message, 502, "hermes_runtime_error")
     return text or "(Hermes returned no final text.)", session_id or resume_session or None, prompt
+
+
+def run_hermes_event_turn(
+    route: dict[str, str],
+    body: dict[str, Any],
+    event_callback,
+    heartbeat=None,
+) -> tuple[str, str | None, str, dict[str, int] | None]:
+    if not os.path.exists(HERMES_EVENT_RUNNER_PATH):
+        raise BridgeError("Asclepius Hermes event runner is not installed.", 500, "event_runner_missing")
+
+    prompt = build_hermes_prompt(body, route)
+    prev = body.get("previous_response_id")
+    resume_session = ""
+    if prev and prev in RESPONSES:
+        resume_session = str(RESPONSES[prev].get("hermes_session_id") or "")
+
+    request = {
+        "prompt": prompt,
+        "model": route["upstream_model"],
+        "provider": route["provider"],
+        "session_id": resume_session or None,
+        "workdir": HERMES_WORKDIR,
+        "max_turns": HERMES_MAX_TURNS,
+    }
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", dir=ROOT, delete=False) as handle:
+        json.dump(request, handle, ensure_ascii=False)
+        request_path = handle.name
+
+    runner_wsl = windows_path_to_wsl(HERMES_EVENT_RUNNER_PATH)
+    request_wsl = windows_path_to_wsl(request_path)
+    args = [
+        "wsl.exe",
+        "-d",
+        HERMES_WSL_DISTRO,
+        "--",
+        HERMES_PYTHON,
+        runner_wsl,
+        request_wsl,
+    ]
+    events: "queue.Queue[dict[str, Any]]" = queue.Queue()
+    stderr_parts: list[str] = []
+
+    def read_stdout(pipe) -> None:
+        try:
+            for line in iter(pipe.readline, ""):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                    if isinstance(event, dict):
+                        events.put(event)
+                except json.JSONDecodeError:
+                    events.put({"type": "runner_output", "text": line})
+        finally:
+            try:
+                pipe.close()
+            except Exception:
+                pass
+
+    def read_stderr(pipe) -> None:
+        try:
+            for line in iter(pipe.readline, ""):
+                if line:
+                    stderr_parts.append(line)
+        finally:
+            try:
+                pipe.close()
+            except Exception:
+                pass
+
+    try:
+        proc = subprocess.Popen(
+            args,
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        assert proc.stdout is not None
+        assert proc.stderr is not None
+        stdout_thread = threading.Thread(target=read_stdout, args=(proc.stdout,), daemon=True)
+        stderr_thread = threading.Thread(target=read_stderr, args=(proc.stderr,), daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
+
+        deadline = time.monotonic() + HERMES_TIMEOUT_SECONDS
+        final_text = ""
+        session_id: str | None = resume_session or None
+        usage: dict[str, int] | None = None
+        runner_error: str | None = None
+
+        while True:
+            if time.monotonic() >= deadline and proc.poll() is None:
+                proc.kill()
+                raise BridgeError(
+                    f"Hermes event runner timed out after {HERMES_TIMEOUT_SECONDS} seconds.",
+                    504,
+                    "hermes_timeout",
+                )
+            try:
+                event = events.get(timeout=HERMES_HEARTBEAT_SECONDS)
+            except queue.Empty:
+                if proc.poll() is not None:
+                    break
+                if heartbeat is not None:
+                    heartbeat()
+                continue
+
+            typ = str(event.get("type") or "")
+            if typ == "started":
+                session_id = str(event.get("session_id") or session_id or "")
+            elif typ == "done":
+                final_text = str(event.get("text") or "")
+                session_id = str(event.get("session_id") or session_id or "")
+                raw_usage = event.get("usage")
+                if isinstance(raw_usage, dict):
+                    usage = {
+                        "input_tokens": int(raw_usage.get("input_tokens") or 0),
+                        "output_tokens": int(raw_usage.get("output_tokens") or 0),
+                        "total_tokens": int(raw_usage.get("total_tokens") or 0),
+                    }
+            elif typ == "error":
+                runner_error = str(event.get("message") or "Hermes event runner failed")
+
+            event_callback(event)
+
+        stdout_thread.join(timeout=2)
+        stderr_thread.join(timeout=2)
+        rc = proc.wait(timeout=5)
+        if runner_error:
+            raise BridgeError(runner_error, 502, "hermes_event_runner_error")
+        if rc != 0 and not final_text:
+            detail = "".join(stderr_parts)[-2000:].strip()
+            raise BridgeError(
+                detail or f"Hermes event runner exited with code {rc}",
+                502,
+                "hermes_event_runner_error",
+            )
+        return final_text or "(Hermes returned no final text.)", session_id or None, prompt, usage
+    finally:
+        try:
+            os.unlink(request_path)
+        except OSError:
+            pass
 
 
 def chat_tool_call_to_response(call: dict[str, Any]) -> dict[str, Any]:
@@ -924,12 +1081,18 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "runtime_mode": RUNTIME_MODE,
                 "bridge_script_sha256": BRIDGE_SCRIPT_SHA256,
                 "hermes_bin": HERMES_BIN,
+                "hermes_python": HERMES_PYTHON,
                 "hermes_wsl_distro": HERMES_WSL_DISTRO,
                 "hermes_workdir": HERMES_WORKDIR,
                 "windows_workspace": WINDOWS_WORKSPACE,
                 "hermes_max_turns": HERMES_MAX_TURNS,
+                "hermes_event_runner": {
+                    "enabled": HERMES_EVENT_RUNNER,
+                    "path": HERMES_EVENT_RUNNER_PATH,
+                    "installed": os.path.exists(HERMES_EVENT_RUNNER_PATH),
+                },
                 "tracked_responses": len(RESPONSES),
-                "session_mapping": "bridge-state.json maps Codex response ids to Hermes session ids; current Hermes may still record source as cli",
+                "session_mapping": "bridge-state.json maps Codex response ids to Hermes session ids; event-runner turns resume the mapped Hermes session when previous_response_id is present",
                 "providers": {
                     "nous": {
                         "ready": True,
@@ -1173,11 +1336,122 @@ class BridgeHandler(BaseHTTPRequestHandler):
             },
         })
 
+        streamed_text_parts: list[str] = []
+        tool_items: list[dict[str, Any]] = []
+        pending_tools: dict[str, dict[str, Any]] = {}
+        next_tool_output_index = 2
+
+        def truncate_tool_output(value: Any) -> str:
+            text_value = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+            if HERMES_TOOL_OUTPUT_LIMIT > 0 and len(text_value) > HERMES_TOOL_OUTPUT_LIMIT:
+                return (
+                    text_value[:HERMES_TOOL_OUTPUT_LIMIT]
+                    + f"\n...[truncated {len(text_value) - HERMES_TOOL_OUTPUT_LIMIT} chars by Asclepius]"
+                )
+            return text_value
+
+        def emit_tool_started(event: dict[str, Any]) -> None:
+            nonlocal next_tool_output_index
+            call_id = str(event.get("call_id") or item_id("call"))
+            name = str(event.get("name") or "hermes_tool")
+            args = event.get("arguments") if isinstance(event.get("arguments"), dict) else {}
+            arguments = json.dumps(args, ensure_ascii=False, separators=(",", ":"))
+            item = {
+                "id": item_id("fc"),
+                "type": "function_call",
+                "status": "in_progress",
+                "name": name,
+                "call_id": call_id,
+                "arguments": arguments,
+            }
+            idx = next_tool_output_index
+            next_tool_output_index += 1
+            pending_tools[call_id] = {"item": item, "output_index": idx}
+            tool_items.append(item)
+            emit("response.output_item.added", {
+                "type": "response.output_item.added",
+                "output_index": idx,
+                "item": item,
+            })
+
+        def emit_tool_completed(event: dict[str, Any]) -> None:
+            nonlocal next_tool_output_index
+            call_id = str(event.get("call_id") or "")
+            if not call_id:
+                return
+            if call_id not in pending_tools:
+                emit_tool_started(event)
+            pending = pending_tools.pop(call_id, None)
+            if not pending:
+                return
+            pending["item"]["status"] = "completed"
+            started_item = dict(pending["item"])
+            emit("response.output_item.done", {
+                "type": "response.output_item.done",
+                "output_index": pending["output_index"],
+                "item": started_item,
+            })
+            result_text = truncate_tool_output(event.get("result") or "")
+            output_parts = [{"type": "input_text", "text": result_text}]
+            output_item = {
+                "id": item_id("fco"),
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": output_parts,
+                "status": "completed",
+            }
+            idx = next_tool_output_index
+            next_tool_output_index += 1
+            tool_items.append(output_item)
+            emit("response.output_item.added", {
+                "type": "response.output_item.added",
+                "output_index": idx,
+                "item": output_item,
+            })
+            emit("response.output_item.done", {
+                "type": "response.output_item.done",
+                "output_index": idx,
+                "item": output_item,
+            })
+
+        def on_runner_event(event: dict[str, Any]) -> None:
+            typ = str(event.get("type") or "")
+            if typ == "delta":
+                delta = str(event.get("text") or "")
+                if not delta:
+                    return
+                streamed_text_parts.append(delta)
+                emit("response.output_text.delta", {
+                    "type": "response.output_text.delta",
+                    "item_id": msg_id,
+                    "output_index": 1,
+                    "content_index": 0,
+                    "delta": delta,
+                    "logprobs": [],
+                })
+            elif typ == "tool_started":
+                emit_tool_started(event)
+            elif typ == "tool_completed":
+                emit_tool_completed(event)
+            elif typ == "started":
+                emit_progress(
+                    f"Hermes Agent callback stream active; session {event.get('session_id') or 'pending'}"
+                )
+
         try:
             def heartbeat() -> None:
                 emit_progress(f"still running; max-turn budget {HERMES_MAX_TURNS}")
 
-            text, hermes_session_id, hermes_prompt = run_hermes_turn(route, body, heartbeat=heartbeat)
+            runner_usage = None
+            if HERMES_EVENT_RUNNER:
+                text, hermes_session_id, hermes_prompt, runner_usage = run_hermes_event_turn(
+                    route,
+                    body,
+                    event_callback=on_runner_event,
+                    heartbeat=heartbeat,
+                )
+            else:
+                text, hermes_session_id, hermes_prompt = run_hermes_turn(route, body, heartbeat=heartbeat)
         except BridgeError as exc:
             failed = envelope("failed")
             failed["error"] = {"message": str(exc), "type": exc.typ}
@@ -1217,38 +1491,48 @@ class BridgeHandler(BaseHTTPRequestHandler):
             "item": reasoning_item,
         })
 
-        # Hermes CLI currently returns final text after its own agent loop. Emit
-        # the final answer as a synthetic stream so Codex's app protocol still
-        # receives incremental output text events once Hermes returns control.
-        for chunk in text_chunks(text):
-            emit("response.output_text.delta", {
-                "type": "response.output_text.delta",
-                "item_id": msg_id,
-                "output_index": 1,
-                "content_index": 0,
-                "delta": chunk,
-                "logprobs": [],
-            })
+        # The event runner streams tokens live through Hermes' native callback.
+        # The CLI fallback only returns final text, so synthesize deltas there.
+        if not streamed_text_parts:
+            for chunk in text_chunks(text):
+                streamed_text_parts.append(chunk)
+                emit("response.output_text.delta", {
+                    "type": "response.output_text.delta",
+                    "item_id": msg_id,
+                    "output_index": 1,
+                    "content_index": 0,
+                    "delta": chunk,
+                    "logprobs": [],
+                })
 
+        final_text = "".join(streamed_text_parts) or text
         emit("response.output_text.done", {
             "type": "response.output_text.done",
             "item_id": msg_id,
             "output_index": 1,
             "content_index": 0,
-            "text": text,
+            "text": final_text,
             "logprobs": [],
         })
-        msg_item = build_message_item(text, msg_id=msg_id)
+        msg_item = build_message_item(final_text, msg_id=msg_id)
         emit("response.output_item.done", {
             "type": "response.output_item.done",
             "output_index": 1,
             "item": msg_item,
         })
-        completed = envelope("completed", [reasoning_item, msg_item])
+        completed = envelope("completed", [reasoning_item, msg_item] + tool_items)
         hermes_accounting = read_hermes_accounting(hermes_session_id)
-        usage, usage_details = actual_hermes_usage(body, hermes_session_id, hermes_accounting, text, reasoning_done)
+        usage, usage_details = actual_hermes_usage(body, hermes_session_id, hermes_accounting, final_text, reasoning_done)
+        if usage is None and runner_usage:
+            usage = runner_usage
+            usage_details = {
+                "usage_source": "hermes_event_runner",
+                "context_tokens": int(runner_usage.get("input_tokens") or 0),
+                "prompt_tokens_sum": int(runner_usage.get("input_tokens") or 0),
+                "api_call_count": None,
+            }
         if usage is None:
-            usage = estimated_hermes_usage(body, hermes_prompt, text, reasoning_done)
+            usage = estimated_hermes_usage(body, hermes_prompt, final_text, reasoning_done)
             usage_details = {
                 "usage_source": "bridge_estimate",
                 "context_tokens": usage["input_tokens"],
