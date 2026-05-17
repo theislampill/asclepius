@@ -18,12 +18,12 @@ import sqlite3
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
-SESSION_RE = re.compile(r"HERMES_SESSION_ID=([0-9]{8}_[0-9]{6}_[0-9a-f]+)")
+SESSION_RE = re.compile(r"(?:HERMES_SESSION_ID=)?([0-9]{8}_[0-9]{6}_[0-9a-f]+)")
 API_RE = re.compile(
     r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),(?P<ms>\d{3}) "
     r"INFO \[(?P<session>[^\]]+)\].*API call #(?P<call>\d+):"
@@ -233,6 +233,98 @@ def usage_info(usage: TurnUsage, context_window: int | None) -> dict[str, Any]:
     return payload
 
 
+def token_total(info: Any) -> int | None:
+    if not isinstance(info, dict):
+        return None
+    total = info.get("total_token_usage")
+    if not isinstance(total, dict):
+        return None
+    try:
+        value = int(total.get("total_tokens") or 0)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def latest_rollout_context(path: Path) -> dict[str, Any] | None:
+    rows = load_jsonl(path)
+    if not rows:
+        return None
+
+    thread_id = None
+    title = None
+    model = None
+    model_provider = None
+    context_window = None
+    latest_info = None
+    latest_session_id = None
+    latest_session_hint = None
+    usage_source = None
+    latest_timestamp = None
+
+    for row in rows:
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if row.get("type") == "session_meta":
+            thread_id = payload.get("id") or thread_id
+            title = payload.get("title") or title
+            model_provider = payload.get("model_provider") or model_provider
+        if payload.get("type") == "task_started":
+            model = payload.get("model") or model
+            context_window = payload.get("model_context_window") or context_window
+        for key in ("message", "last_agent_message"):
+            value = payload.get(key)
+            if not isinstance(value, str):
+                continue
+            match = SESSION_RE.search(value)
+            if match:
+                latest_session_hint = match.group(1)
+
+    for row in reversed(rows):
+        payload = row.get("payload")
+        if not isinstance(payload, dict) or payload.get("type") != "token_count":
+            continue
+        info = payload.get("info")
+        if token_total(info) is None:
+            continue
+        latest_info = info
+        latest_session_id = payload.get("hermes_session_id")
+        usage_source = payload.get("asclepius_usage_source") or "codex_token_count"
+        latest_timestamp = row.get("timestamp")
+        break
+
+    if latest_info is None:
+        return None
+    total = latest_info.get("total_token_usage") or {}
+    last = latest_info.get("last_token_usage") or {}
+    try:
+        context_window_int = int(latest_info.get("model_context_window") or context_window or 0)
+    except (TypeError, ValueError):
+        context_window_int = 0
+    session_total_tokens = int(total.get("total_tokens") or 0)
+    context_tokens_used = int(last.get("total_tokens") or session_total_tokens)
+    remaining = max(context_window_int - context_tokens_used, 0) if context_window_int else None
+    percent = round((context_tokens_used / context_window_int) * 100, 2) if context_window_int else None
+    return {
+        "thread_id": thread_id,
+        "title": title,
+        "rollout_path": str(path),
+        "model_provider": model_provider,
+        "model": model,
+        "hermes_session_id": latest_session_id or latest_session_hint,
+        "usage_source": usage_source,
+        "updated_at": latest_timestamp,
+        "context_window": context_window_int or None,
+        "context_tokens_used": context_tokens_used,
+        "session_cumulative_tokens": session_total_tokens,
+        "remaining_tokens": remaining,
+        "percent_used": percent,
+        "total_token_usage": total,
+        "last_token_usage": last,
+    }
+
+
 def backfill_rollout(path: Path, calls: list[ApiCall]) -> tuple[bool, int | None]:
     rows = load_jsonl(path)
     if not rows:
@@ -357,6 +449,120 @@ def sync_threads_db(codex_home: Path, totals: dict[str, int]) -> int:
         con.close()
 
 
+def load_thread_metadata(codex_home: Path) -> dict[str, dict[str, Any]]:
+    db_path = codex_home / "state_5.sqlite"
+    if not db_path.exists():
+        return {}
+    con = sqlite3.connect(str(db_path), timeout=5)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            """
+            SELECT id, title, model_provider, model, reasoning_effort,
+                   tokens_used, updated_at, rollout_path
+            FROM threads
+            """
+        ).fetchall()
+        return {str(row["rollout_path"]): dict(row) for row in rows}
+    finally:
+        con.close()
+
+
+def write_context_status(root: Path, contexts: list[dict[str, Any]], codex_home: Path) -> None:
+    thread_meta = load_thread_metadata(codex_home)
+    enriched: list[dict[str, Any]] = []
+    for context in contexts:
+        item = dict(context)
+        meta = thread_meta.get(item.get("rollout_path") or "")
+        if meta:
+            item["thread_id"] = meta.get("id") or item.get("thread_id")
+            item["title"] = meta.get("title") or item.get("title")
+            item["model_provider"] = meta.get("model_provider") or item.get("model_provider")
+            item["model"] = meta.get("model") or item.get("model")
+            item["reasoning_effort"] = meta.get("reasoning_effort")
+            item["tokens_used_row"] = meta.get("tokens_used")
+            item["thread_updated_at"] = meta.get("updated_at")
+        enriched.append(item)
+
+    def sort_key(item: dict[str, Any]) -> tuple[float, float]:
+        path = item.get("rollout_path") or ""
+        try:
+            mtime = Path(path).stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        try:
+            updated = float(item.get("thread_updated_at") or 0)
+        except (TypeError, ValueError):
+            updated = 0.0
+        return (max(updated, mtime), mtime)
+
+    latest = max(enriched, key=sort_key) if enriched else None
+    generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    status = {
+        "generated_at": generated_at,
+        "source": "asclepius_token_sync",
+        "notes": [
+            "Use this file as the Asclepius context/token source of truth.",
+            "It is updated after completed Hermes turns; an in-flight model call is not knowable until Hermes logs usage.",
+            "Counts come from Hermes Agent provider usage logs and Codex's isolated rollout state.",
+        ],
+        "latest_thread": latest,
+        "threads": sorted(enriched, key=sort_key, reverse=True)[:25],
+    }
+    json_path = root / "asclepius-context-status.json"
+    md_path = root / "asclepius-context-status.md"
+    tmp_json = json_path.with_suffix(".json.tmp")
+    tmp_json.write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp_json, json_path)
+
+    if latest:
+        usage = latest.get("total_token_usage") or {}
+        context_window = latest.get("context_window") or 0
+        context_used = int(latest.get("context_tokens_used") or 0)
+        cumulative_used = int(latest.get("session_cumulative_tokens") or usage.get("total_tokens") or 0)
+        remaining = latest.get("remaining_tokens")
+        percent = latest.get("percent_used")
+        lines = [
+            "# Asclepius Context Status",
+            "",
+            f"- Generated: {generated_at}",
+            "- Source: Hermes Agent provider usage logs + isolated Codex rollout token_count events",
+            "- Reader rule: answer Asclepius context questions from this file, not by reconstructing raw logs.",
+            "- Freshness: reflects the last completed Hermes turn; a currently in-flight turn appears after completion.",
+            "",
+            "## Latest Thread",
+            "",
+            f"- Thread: {latest.get('thread_id') or 'unknown'}",
+            f"- Title: {latest.get('title') or 'unknown'}",
+            f"- Model provider: {latest.get('model_provider') or 'unknown'}",
+            f"- Model: {latest.get('model') or 'unknown'}",
+            f"- Hermes session: {latest.get('hermes_session_id') or 'unknown'}",
+            f"- Usage source: {latest.get('usage_source') or 'unknown'}",
+            f"- Context window: {context_window:,} tokens" if context_window else "- Context window: unknown",
+            f"- Context tokens used: {context_used:,}",
+            f"- Tokens remaining: {int(remaining):,}" if remaining is not None else "- Tokens remaining: unknown",
+            f"- Percent used: {percent}%" if percent is not None else "- Percent used: unknown",
+            f"- Session cumulative tokens: {cumulative_used:,}",
+            "",
+            "## Last Token Usage",
+            "",
+            f"- Input/context tokens: {int((latest.get('last_token_usage') or {}).get('input_tokens') or 0):,}",
+            f"- Cached input tokens: {int((latest.get('last_token_usage') or {}).get('cached_input_tokens') or 0):,}",
+            f"- Output tokens: {int((latest.get('last_token_usage') or {}).get('output_tokens') or 0):,}",
+            f"- Reasoning output tokens: {int((latest.get('last_token_usage') or {}).get('reasoning_output_tokens') or 0):,}",
+        ]
+    else:
+        lines = [
+            "# Asclepius Context Status",
+            "",
+            f"- Generated: {generated_at}",
+            "- No completed Asclepius token usage has been recorded yet.",
+        ]
+    tmp_md = md_path.with_suffix(".md.tmp")
+    tmp_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.replace(tmp_md, md_path)
+
+
 def scan_once(root: Path, distro: str) -> dict[str, int]:
     codex_home = root / "codex-home"
     sessions_dir = codex_home / "sessions"
@@ -365,6 +571,7 @@ def scan_once(root: Path, distro: str) -> dict[str, int]:
 
     calls = read_api_calls(hermes_log_path(distro))
     totals: dict[str, int] = {}
+    contexts: list[dict[str, Any]] = []
     rollouts_changed = 0
     for path in sessions_dir.rglob("*.jsonl"):
         changed, total = backfill_rollout(path, calls)
@@ -372,7 +579,11 @@ def scan_once(root: Path, distro: str) -> dict[str, int]:
             rollouts_changed += 1
         if total is not None:
             totals[str(path)] = total
+        context = latest_rollout_context(path)
+        if context is not None:
+            contexts.append(context)
     threads_changed = sync_threads_db(codex_home, totals)
+    write_context_status(root, contexts, codex_home)
     return {"rollouts_changed": rollouts_changed, "threads_changed": threads_changed}
 
 

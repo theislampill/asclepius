@@ -375,6 +375,10 @@ def runtime_capsule(body: dict[str, Any], route: dict[str, str]) -> str:
     approval = profile.get("approval_policy", "unknown")
     effort = profile.get("model_reasoning_effort", "unknown")
     wsl_workspace = windows_path_to_wsl(WINDOWS_WORKSPACE)
+    context_status_path = os.path.join(ROOT, "asclepius-context-status.md")
+    context_status_json = os.path.join(ROOT, "asclepius-context-status.json")
+    context_status_wsl = windows_path_to_wsl(context_status_path)
+    context_status_json_wsl = windows_path_to_wsl(context_status_json)
     metadata = selected_model_metadata(route)
     context_window = context_window_text(metadata.get("context_length"))
     billing = metadata.get("billing_label") or metadata.get("billing") or "unknown"
@@ -394,6 +398,12 @@ def runtime_capsule(body: dict[str, Any], route: dict[str, str]) -> str:
 - Keep file reads bounded. Prefer listing/searching first, then read small ranges. Avoid repeatedly reading large generated files.
 - If you need to alter files, keep edits inside the workspace unless the user explicitly asks otherwise.
 - Each Codex chat should map to its own Hermes session through previous_response_id. Do not assume one global conversation.
+- If the user asks about context usage, token counts, context window, compaction readiness, or whether the context reader is set, read Asclepius' corrected context status first:
+  - Windows Markdown: {context_status_path}
+  - Windows JSON: {context_status_json}
+  - WSL Markdown: {context_status_wsl}
+  - WSL JSON: {context_status_json_wsl}
+- Treat that context status as the source of truth for completed turns. It is updated by Asclepius token sync after Hermes finishes a turn; the currently in-flight model call cannot be known until Hermes logs its usage.
 - For compaction/resume turns, preserve task state, decisions, file paths, tool results, and Hermes session continuity. Keep summaries dense enough to survive the selected model context window.
 - Bridge request shape: {request_shape_summary(body)}
 """
