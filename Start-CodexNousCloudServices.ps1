@@ -37,6 +37,14 @@ function Stop-BridgeProcesses {
   } catch {}
 }
 
+function Stop-TokenSyncProcesses {
+  try {
+    Get-CimInstance Win32_Process |
+      Where-Object { $_.CommandLine -like "*sync_asclepius_token_usage.py*" -and $_.Name -match "python" } |
+      ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+  } catch {}
+}
+
 function Find-Python {
   $candidates = @(
     (Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"),
@@ -102,6 +110,34 @@ if (-not $bridgeReady) {
 
 if (-not $NoCatalogRefresh) {
   & (Join-Path $Root "Refresh-NousCatalog.ps1") | Out-Null
+}
+
+$pythonForSync = Find-Python
+$tokenSync = Join-Path $Root "sync_asclepius_token_usage.py"
+if (Test-Path -LiteralPath $tokenSync) {
+  $expectedTokenSyncHash = ""
+  try {
+    $expectedTokenSyncHash = (Get-FileHash -LiteralPath $tokenSync -Algorithm SHA256).Hash.ToLowerInvariant()
+  } catch {}
+  $runningTokenSync = @(Get-CimInstance Win32_Process |
+    Where-Object { $_.CommandLine -like "*sync_asclepius_token_usage.py*" -and $_.Name -match "python" })
+  $tokenSyncReady = $false
+  foreach ($row in $runningTokenSync) {
+    if (-not $expectedTokenSyncHash -or ([string]$row.CommandLine -like "*$expectedTokenSyncHash*")) {
+      $tokenSyncReady = $true
+    }
+  }
+  if (-not $tokenSyncReady) {
+    Stop-TokenSyncProcesses
+    $syncOut = Join-Path $Logs "asclepius-token-sync.out.log"
+    $syncErr = Join-Path $Logs "asclepius-token-sync.err.log"
+    Start-Process -FilePath $pythonForSync `
+      -ArgumentList @($tokenSync, "--root", $Root, "--watch", "--interval", "4", "--hash", $expectedTokenSyncHash) `
+      -WorkingDirectory $Root `
+      -WindowStyle Hidden `
+      -RedirectStandardOutput $syncOut `
+      -RedirectStandardError $syncErr | Out-Null
+  }
 }
 
 Write-Output "Hermes Nous proxy: http://127.0.0.1:$ProxyPort/health"

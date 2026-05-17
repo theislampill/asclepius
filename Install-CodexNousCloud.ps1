@@ -9,6 +9,7 @@ $required = @(
   "Test-Asclepius.ps1",
   "Install-AsclepiusDependency.ps1",
   "codex_nous_bridge.py",
+  "sync_asclepius_token_usage.py",
   "Start-CodexNousCloudServices.ps1",
   "Refresh-NousCatalog.ps1",
   "Launch-AsclepiusProviderLauncher.ps1",
