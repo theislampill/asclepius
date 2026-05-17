@@ -622,6 +622,193 @@ def previous_context_tokens(body: dict[str, Any]) -> int:
     return 0
 
 
+def read_hermes_accounting(session_id: str | None) -> dict[str, Any] | None:
+    if not session_id:
+        return None
+    script = r"""
+import json
+import re
+import sqlite3
+import sys
+from pathlib import Path
+
+session_id = sys.argv[1]
+home = Path.home() / ".hermes"
+db_path = home / "state.db"
+result = {"session_id": session_id, "db": None, "api_calls": []}
+
+if db_path.exists():
+    con = sqlite3.connect(str(db_path))
+    con.row_factory = sqlite3.Row
+    try:
+        row = con.execute(
+            "SELECT input_tokens, output_tokens, cache_read_tokens, "
+            "cache_write_tokens, reasoning_tokens, api_call_count "
+            "FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is not None:
+            result["db"] = dict(row)
+    finally:
+        con.close()
+
+log_path = home / "logs" / "agent.log"
+if log_path.exists():
+    pattern = re.compile(
+        r"\[" + re.escape(session_id) + r"\].*API call #(?P<call>\d+):"
+        r".*?\bin=(?P<input>\d+)\s+out=(?P<output>\d+)\s+total=(?P<total>\d+)"
+        r"(?:.*?\bcache=(?P<cache_read>\d+)/(?P<cache_prompt>\d+))?"
+    )
+    try:
+        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                match = pattern.search(line)
+                if not match:
+                    continue
+                result["api_calls"].append({
+                    "call_number": int(match.group("call")),
+                    "prompt_tokens": int(match.group("input")),
+                    "output_tokens": int(match.group("output")),
+                    "total_tokens": int(match.group("total")),
+                    "cache_read_tokens": int(match.group("cache_read") or 0),
+                })
+    except OSError:
+        pass
+
+print(json.dumps(result, separators=(",", ":")))
+"""
+    try:
+        completed = subprocess.run(
+            ["wsl.exe", "-d", HERMES_WSL_DISTRO, "--", "python3", "-c", script, session_id],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+        )
+    except Exception:
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        data = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def accounting_prompt_tokens(accounting: dict[str, Any] | None) -> int:
+    if not accounting:
+        return 0
+    db = accounting.get("db")
+    if not isinstance(db, dict):
+        return 0
+    total = 0
+    for key in ("input_tokens", "cache_read_tokens", "cache_write_tokens"):
+        try:
+            total += int(db.get(key) or 0)
+        except (TypeError, ValueError):
+            pass
+    return total
+
+
+def accounting_output_tokens(accounting: dict[str, Any] | None) -> int:
+    if not accounting:
+        return 0
+    db = accounting.get("db")
+    if not isinstance(db, dict):
+        return 0
+    total = 0
+    for key in ("output_tokens", "reasoning_tokens"):
+        try:
+            total += int(db.get(key) or 0)
+        except (TypeError, ValueError):
+            pass
+    return total
+
+
+def accounting_api_call_count(accounting: dict[str, Any] | None) -> int:
+    if not accounting:
+        return 0
+    calls = accounting.get("api_calls")
+    if isinstance(calls, list) and calls:
+        return len(calls)
+    db = accounting.get("db")
+    if isinstance(db, dict):
+        try:
+            return int(db.get("api_call_count") or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def previous_accounting(body: dict[str, Any], session_id: str | None) -> dict[str, Any] | None:
+    prev = body.get("previous_response_id")
+    if not (prev and prev in RESPONSES and session_id):
+        return None
+    stored = RESPONSES[prev]
+    if str(stored.get("hermes_session_id") or "") != str(session_id):
+        return None
+    accounting = stored.get("hermes_accounting")
+    return accounting if isinstance(accounting, dict) else None
+
+
+def actual_hermes_usage(
+    body: dict[str, Any],
+    session_id: str | None,
+    accounting: dict[str, Any] | None,
+    output: str,
+    progress: str = "",
+) -> tuple[dict[str, int] | None, dict[str, Any]]:
+    if not accounting:
+        return None, {}
+    prior = previous_accounting(body, session_id)
+    prompt_delta = accounting_prompt_tokens(accounting) - accounting_prompt_tokens(prior)
+    output_delta = accounting_output_tokens(accounting) - accounting_output_tokens(prior)
+    api_delta = accounting_api_call_count(accounting) - accounting_api_call_count(prior)
+    if prompt_delta < 0:
+        prompt_delta = accounting_prompt_tokens(accounting)
+    if output_delta < 0:
+        output_delta = accounting_output_tokens(accounting)
+    if api_delta < 0:
+        api_delta = accounting_api_call_count(accounting)
+
+    api_calls = accounting.get("api_calls") if isinstance(accounting.get("api_calls"), list) else []
+    prior_call_count = accounting_api_call_count(prior)
+    new_calls = api_calls[prior_call_count:] if prior and prior_call_count <= len(api_calls) else api_calls
+    last_prompt_tokens = 0
+    if new_calls:
+        try:
+            last_prompt_tokens = int(new_calls[-1].get("prompt_tokens") or 0)
+        except (TypeError, ValueError):
+            last_prompt_tokens = 0
+
+    # Codex's context meter needs the live prompt/context size, not cached
+    # billable deltas. Hermes' log line is emitted from normalized provider
+    # usage, so prefer the last upstream prompt for compaction accounting.
+    input_tokens = last_prompt_tokens or prompt_delta
+    if input_tokens <= 0:
+        return None, {}
+    if output_delta <= 0:
+        output_delta = estimate_tokens(output) + estimate_tokens(progress)
+    usage = {
+        "input_tokens": input_tokens,
+        "output_tokens": output_delta,
+        "total_tokens": input_tokens + output_delta,
+    }
+    details = {
+        "usage_source": "hermes_actual",
+        "context_tokens": input_tokens,
+        "prompt_tokens_sum": prompt_delta,
+        "api_call_count": api_delta,
+    }
+    return usage, details
+
+
 def estimated_hermes_usage(body: dict[str, Any], prompt: str, output: str, progress: str = "") -> dict[str, int]:
     current_input = estimate_tokens(prompt)
     prior_context = previous_context_tokens(body)
@@ -825,7 +1012,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
 
         output = build_message_item(text)
-        usage = estimated_hermes_usage(body, hermes_prompt, text)
+        hermes_accounting = read_hermes_accounting(hermes_session_id)
+        usage, usage_details = actual_hermes_usage(body, hermes_session_id, hermes_accounting, text)
+        if usage is None:
+            usage = estimated_hermes_usage(body, hermes_prompt, text)
+            usage_details = {
+                "usage_source": "bridge_estimate",
+                "context_tokens": usage["input_tokens"],
+                "prompt_tokens_sum": usage["input_tokens"],
+                "api_call_count": None,
+            }
         response = {
             "id": rid,
             "object": "response",
@@ -839,14 +1035,18 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "hermes_session_id": hermes_session_id,
                 "provider": route["provider"],
                 "upstream_model": route["upstream_model"],
-                "usage_estimated": True,
+                "usage_source": usage_details["usage_source"],
+                "hermes_context_tokens": usage_details["context_tokens"],
+                "hermes_prompt_tokens_sum": usage_details["prompt_tokens_sum"],
+                "hermes_api_call_count": usage_details["api_call_count"],
             },
         }
         RESPONSES[rid] = {
             "response": response,
             "chat_history": [],
             "hermes_session_id": hermes_session_id,
-            "context_tokens": usage["total_tokens"],
+            "hermes_accounting": hermes_accounting,
+            "context_tokens": usage_details["context_tokens"],
         }
         save_state()
         write_json(self, response)
@@ -1013,15 +1213,28 @@ class BridgeHandler(BaseHTTPRequestHandler):
             "item": msg_item,
         })
         completed = envelope("completed", [reasoning_item, msg_item])
-        usage = estimated_hermes_usage(body, hermes_prompt, text, reasoning_done)
+        hermes_accounting = read_hermes_accounting(hermes_session_id)
+        usage, usage_details = actual_hermes_usage(body, hermes_session_id, hermes_accounting, text, reasoning_done)
+        if usage is None:
+            usage = estimated_hermes_usage(body, hermes_prompt, text, reasoning_done)
+            usage_details = {
+                "usage_source": "bridge_estimate",
+                "context_tokens": usage["input_tokens"],
+                "prompt_tokens_sum": usage["input_tokens"],
+                "api_call_count": None,
+            }
         completed["usage"] = usage
         completed["metadata"]["hermes_session_id"] = hermes_session_id
-        completed["metadata"]["usage_estimated"] = True
+        completed["metadata"]["usage_source"] = usage_details["usage_source"]
+        completed["metadata"]["hermes_context_tokens"] = usage_details["context_tokens"]
+        completed["metadata"]["hermes_prompt_tokens_sum"] = usage_details["prompt_tokens_sum"]
+        completed["metadata"]["hermes_api_call_count"] = usage_details["api_call_count"]
         RESPONSES[rid] = {
             "response": completed,
             "chat_history": [],
             "hermes_session_id": hermes_session_id,
-            "context_tokens": usage["total_tokens"],
+            "hermes_accounting": hermes_accounting,
+            "context_tokens": usage_details["context_tokens"],
         }
         save_state()
         emit("response.completed", {"type": "response.completed", "response": completed})
