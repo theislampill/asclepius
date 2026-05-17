@@ -19,7 +19,11 @@ $ElectronUserData = if ($env:ASCLEPIUS_ELECTRON_USER_DATA_OVERRIDE) {
   Join-Path $Root "electron-user-data"
 }
 $CloudModelsPath = Join-Path $Root "cloud-models.json"
-$InstructionsPath = Join-Path $Root "cloud-codex-instructions.md"
+$InstructionsPath = if ($env:ASCLEPIUS_INSTRUCTIONS_PATH_OVERRIDE) {
+  $env:ASCLEPIUS_INSTRUCTIONS_PATH_OVERRIDE
+} else {
+  Join-Path $Root "cloud-codex-instructions.md"
+}
 $WindowIdentityProbe = Join-Path $Root "Test-AsclepiusWindowIdentity.ps1"
 $WindowIdentityWatcher = Join-Path $Root "Start-AsclepiusWindowIdentityWatcher.ps1"
 $HermesTitlebarOverlay = Join-Path $Root "Start-AsclepiusHermesTitlebarOverlay.ps1"
@@ -333,6 +337,43 @@ Important runtime boundary:
   [System.IO.File]::WriteAllText($InstructionsPath, $text, $utf8NoBom)
 }
 
+function Ensure-CloudCodexConfig {
+  $configPath = Join-Path $CodexHome "config.toml"
+  if (Test-Path -LiteralPath $configPath) { return }
+
+  New-Item -ItemType Directory -Force -Path $CodexHome | Out-Null
+  $catalog = Join-Path $Root "codex-model-catalog.json"
+  $escapedCatalog = $catalog.Replace("\", "\\")
+  $escapedInstructions = $InstructionsPath.Replace("\", "\\")
+  $config = @"
+model = "nous/deepseek/deepseek-v4-flash"
+model_provider = "nous-cloud"
+model_reasoning_effort = "medium"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+model_catalog_json = "$escapedCatalog"
+model_instructions_file = "$escapedInstructions"
+personality = "pragmatic"
+
+[windows]
+sandbox = "elevated"
+
+[model_providers.nous-cloud]
+name = "@nous:deepseek/deepseek-v4-flash via Hermes"
+base_url = "http://127.0.0.1:8655/v1"
+experimental_bearer_token = "local-codex-nous-cloud"
+wire_api = "responses"
+request_max_retries = 1
+stream_max_retries = 1
+stream_idle_timeout_ms = 300000
+
+[projects.'C:\workspace\ai']
+trust_level = "trusted"
+"@
+  $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($configPath, $config, $utf8NoBom)
+}
+
 function Set-CloudCodexModel {
   param([string]$SelectedModel)
   if ([string]::IsNullOrWhiteSpace($SelectedModel)) {
@@ -342,9 +383,7 @@ function Set-CloudCodexModel {
   $upstream = if ($SelectedModel -match '^[^/:]+[:/](.+)$') { $matches[1] } else { $SelectedModel }
   $providerName = "@$provider`:$upstream via Hermes"
   $configPath = Join-Path $CodexHome "config.toml"
-  if (-not (Test-Path -LiteralPath $configPath)) {
-    throw "Cloud-Codex config not found: $configPath"
-  }
+  Ensure-CloudCodexConfig
   $escaped = $SelectedModel.Replace("\", "\\").Replace('"', '\"')
   $escapedProviderName = $providerName.Replace("\", "\\").Replace('"', '\"')
   $content = Get-Content -Raw -LiteralPath $configPath

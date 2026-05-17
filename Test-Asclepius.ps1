@@ -57,6 +57,38 @@ function Test-AsclepiusLauncherExe {
   Add-Check "asclepius_exe" $exe
 }
 
+function Test-DirectRunConfigBootstrap {
+  $script = Join-Path $Root "Launch-CloudCodexApp.ps1"
+  Assert-True (Test-Path -LiteralPath $script) "Cloud Codex app launcher not found: $script"
+  $tempRoot = Join-Path $env:TEMP ("asclepius-direct-run-" + [guid]::NewGuid().ToString("N"))
+  $tempHome = Join-Path $tempRoot "codex-home"
+  $tempUserData = Join-Path $tempRoot "electron-user-data"
+  $tempInstructions = Join-Path $tempRoot "cloud-codex-instructions.md"
+  $oldHome = $env:ASCLEPIUS_CODEX_HOME_OVERRIDE
+  $oldUserData = $env:ASCLEPIUS_ELECTRON_USER_DATA_OVERRIDE
+  $oldInstructions = $env:ASCLEPIUS_INSTRUCTIONS_PATH_OVERRIDE
+  try {
+    $env:ASCLEPIUS_CODEX_HOME_OVERRIDE = $tempHome
+    $env:ASCLEPIUS_ELECTRON_USER_DATA_OVERRIDE = $tempUserData
+    $env:ASCLEPIUS_INSTRUCTIONS_PATH_OVERRIDE = $tempInstructions
+    $dryRun = & $script -Model "nous/deepseek/deepseek-v4-flash" -DryRun
+    if ($LASTEXITCODE -ne 0) {
+      throw "Direct-run dry-run failed."
+    }
+    $config = Join-Path $tempHome "config.toml"
+    Assert-True (Test-Path -LiteralPath $config) "Direct-run config bootstrap did not create $config"
+    Assert-True ($dryRun.CodexHome -eq $tempHome) "Direct-run dry-run did not use the temporary Codex home."
+    Add-Check "direct_run_config_bootstrap" $config
+  } finally {
+    $env:ASCLEPIUS_CODEX_HOME_OVERRIDE = $oldHome
+    $env:ASCLEPIUS_ELECTRON_USER_DATA_OVERRIDE = $oldUserData
+    $env:ASCLEPIUS_INSTRUCTIONS_PATH_OVERRIDE = $oldInstructions
+    if (Test-Path -LiteralPath $tempRoot) {
+      Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
 function Test-WindowIdentityProbe {
   $probe = Join-Path $Root "Test-AsclepiusWindowIdentity.ps1"
   Assert-True (Test-Path -LiteralPath $probe) "Window identity probe script not found: $probe"
@@ -258,6 +290,7 @@ function Test-SecretEgress {
 Test-PowerShellSyntax
 Test-PythonBridge
 Test-AsclepiusLauncherExe
+Test-DirectRunConfigBootstrap
 Test-WindowIdentityProbe
 Test-WindowIdentityWatcher
 Test-InstalledLauncher

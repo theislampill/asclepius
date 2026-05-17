@@ -16,16 +16,71 @@ $BuildLauncherScript = Join-Path $Root "Build-AsclepiusLauncher.ps1"
 $AsclepiusExe = Join-Path $Root "Asclepius.exe"
 
 function Get-CodexProcessSnapshot {
+  param([string]$ExpectedElectronUserData)
+
+  $expectedUserData = $null
+  if (-not [string]::IsNullOrWhiteSpace($ExpectedElectronUserData)) {
+    $expectedUserData = [System.IO.Path]::GetFullPath($ExpectedElectronUserData).TrimEnd('\')
+  }
+  $userDataByPid = @{}
+  $parentByPid = @{}
+  $knownCodexPids = @{}
+  $expectedFamilyPids = @{}
+  try {
+    $cimRows = @(Get-CimInstance Win32_Process -Filter "name = 'Codex.exe'" -ErrorAction Stop)
+    foreach ($row in $cimRows) {
+      $procId = [int]$row.ProcessId
+      $parentByPid[$procId] = [int]$row.ParentProcessId
+      $knownCodexPids[$procId] = $true
+
+      $commandLine = [string]$row.CommandLine
+      $userData = $null
+      if ($commandLine -match '--user-data-dir=(?:"([^"]+)"|(\S+))') {
+        $userData = if ($matches[1]) { $matches[1] } else { $matches[2] }
+      } elseif ($commandLine -match '--user-data-dir\s+(?:"([^"]+)"|(\S+))') {
+        $userData = if ($matches[1]) { $matches[1] } else { $matches[2] }
+      }
+      if (-not [string]::IsNullOrWhiteSpace($userData)) {
+        try {
+          $userDataByPid[$procId] = [System.IO.Path]::GetFullPath($userData).TrimEnd('\')
+        } catch {
+          $userDataByPid[$procId] = $userData.TrimEnd('\')
+        }
+      }
+    }
+
+    if ($expectedUserData) {
+      foreach ($procId in @($userDataByPid.Keys)) {
+        $userData = [string]$userDataByPid[$procId]
+        if (-not $userData.Equals($expectedUserData, [System.StringComparison]::OrdinalIgnoreCase)) {
+          continue
+        }
+
+        $current = [int]$procId
+        for ($i = 0; $i -lt 12; $i++) {
+          $expectedFamilyPids[$current] = $true
+          if (-not $parentByPid.ContainsKey($current)) { break }
+          $parent = [int]$parentByPid[$current]
+          if (-not $knownCodexPids.ContainsKey($parent)) { break }
+          $current = $parent
+        }
+      }
+    }
+  } catch {}
+
   $rows = @()
   foreach ($name in @("Codex", "codex")) {
     $rows += Get-Process -Name $name -ErrorAction SilentlyContinue |
       Where-Object { $_.Path -and $_.Path.EndsWith("\Codex.exe", [System.StringComparison]::OrdinalIgnoreCase) } |
       ForEach-Object {
+        $procId = [int]$_.Id
         [pscustomobject]@{
-          Id = $_.Id
+          Id = $procId
           MainWindowHandle = [int64]$_.MainWindowHandle
           MainWindowTitle = $_.MainWindowTitle
           Path = $_.Path
+          UserDataDir = $userDataByPid[$procId]
+          IsExpectedSmokeProfile = if ($expectedUserData) { $expectedFamilyPids.ContainsKey($procId) } else { $true }
         }
       }
   }
@@ -124,7 +179,8 @@ trust_level = "trusted"
 function Wait-ForFreshCodexWindow {
   param(
     [Parameter(Mandatory)]$Before,
-    [Parameter(Mandatory)][datetime]$Deadline
+    [Parameter(Mandatory)][datetime]$Deadline,
+    [Parameter(Mandatory)][string]$ExpectedElectronUserData
   )
 
   $beforePids = @{}
@@ -138,9 +194,10 @@ function Wait-ForFreshCodexWindow {
 
   do {
     Start-Sleep -Milliseconds 500
-    $after = @(Get-CodexProcessSnapshot)
+    $after = @(Get-CodexProcessSnapshot -ExpectedElectronUserData $ExpectedElectronUserData)
     $newWindows = @($after | Where-Object {
       $_.MainWindowHandle -ne 0 -and
+      $_.IsExpectedSmokeProfile -eq $true -and
       -not $beforePids.ContainsKey([int]$_.Id) -and
       -not $beforeHandles.ContainsKey([int64]$_.MainWindowHandle)
     })
@@ -195,17 +252,20 @@ if ($ViaAsclepiusExe) {
   $started = Start-Process -FilePath $codexExe -ArgumentList @("--open-project", $Workspace) -WorkingDirectory $Workspace -PassThru
 }
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-$target = Wait-ForFreshCodexWindow -Before $before -Deadline $deadline
+$target = Wait-ForFreshCodexWindow -Before $before -Deadline $deadline -ExpectedElectronUserData $electronUserData
 
 if (-not $target) {
-  $after = @(Get-CodexProcessSnapshot)
+  $after = @(Get-CodexProcessSnapshot -ExpectedElectronUserData $electronUserData)
   $newPids = @($after.Id | Where-Object { $before.Id -notcontains $_ })
+  $expectedProfilePids = @($after | Where-Object { $_.IsExpectedSmokeProfile -eq $true } | Select-Object -ExpandProperty Id)
   [pscustomobject]@{
     ok = $false
-    reason = "No fresh Codex top-level window appeared. Refusing to modify an existing Codex window."
+    reason = "No fresh Codex top-level window appeared for the smoke Electron profile. Refusing to modify an existing or unrelated Codex window."
     started_process_id = $started.Id
     new_codex_process_ids = $newPids
+    expected_profile_process_ids = $expectedProfilePids
     existing_codex_window_count = @($before | Where-Object { $_.MainWindowHandle -ne 0 }).Count
+    expected_electron_user_data = $electronUserData
     temp_root = $tempRoot
   }
   exit 2
@@ -253,6 +313,9 @@ $result = [pscustomobject]@{
   launch_path = if ($ViaAsclepiusExe) { $AsclepiusExe } else { $codexExe }
   target_process_id = $target.Id
   target_hwnd = $verifyRow.hwnd
+  target_user_data_dir = $target.UserDataDir
+  target_is_expected_smoke_profile = $target.IsExpectedSmokeProfile
+  expected_electron_user_data = $electronUserData
   target_window_count = $verifyRow.window_count
   visible_branded_count = $verifyRow.visible_branded_count
   target_title_before = $verifyRow.title_before
@@ -264,7 +327,7 @@ $result = [pscustomobject]@{
   watcher_process_id = $watcher.Id
   watcher_once_ok = $watcherRow.ok
   temp_root = $tempRoot
-  note = "Only a Codex PID/HWND absent from the pre-launch snapshot was modified. Existing Codex windows were not targeted."
+  note = "Only a Codex PID/HWND absent from the pre-launch snapshot and using the smoke Electron profile was modified. Existing or unrelated Codex windows were not targeted."
 }
 
 if ($CloseWhenDone) {

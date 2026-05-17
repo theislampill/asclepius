@@ -146,7 +146,16 @@ supervisor setup surface with install buttons instead of pretending to be Codex.
 
 ## Install
 
-From this directory:
+Fast path from the release zip:
+
+1. Extract the zip.
+2. Run `Asclepius.exe`.
+3. Choose a provider/model route and click `Launch`.
+
+The direct `.exe` path creates the isolated local profile files it needs inside
+the extracted folder. It does not require running the installer first.
+
+Optional desktop shortcut install from this directory:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-CodexNousCloud.ps1

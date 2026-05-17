@@ -275,13 +275,31 @@ function Invoke-BridgeSmoke {
 function Launch-CloudCodex {
   param([string]$Model)
   $script = Join-Path $Root "Launch-CloudCodexApp.ps1"
-  Start-Process -FilePath "powershell.exe" -ArgumentList @(
+  $logs = Join-Path $Root "logs"
+  New-Item -ItemType Directory -Force -Path $logs | Out-Null
+  $out = Join-Path $logs "launch-cloud-codex.out.log"
+  $err = Join-Path $logs "launch-cloud-codex.err.log"
+  Remove-Item -LiteralPath $out,$err -Force -ErrorAction SilentlyContinue
+  $proc = Start-Process -FilePath "powershell.exe" -ArgumentList @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-WindowStyle", "Hidden",
     "-File", $script,
     "-Model", $Model
-  ) -WorkingDirectory $Root -WindowStyle Hidden | Out-Null
+  ) -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err -Wait -PassThru
+  if ($proc.ExitCode -ne 0) {
+    $detail = ""
+    if (Test-Path -LiteralPath $err) {
+      $detail = (Get-Content -Raw -LiteralPath $err).Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($detail) -and (Test-Path -LiteralPath $out)) {
+      $detail = (Get-Content -Raw -LiteralPath $out).Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($detail)) {
+      $detail = "Launch-CloudCodexApp.ps1 exited with code $($proc.ExitCode)."
+    }
+    throw $detail
+  }
 }
 
 function Test-ModelCanRun {
@@ -1007,8 +1025,15 @@ $script:RefreshChecksButton.Add_Click({
 $script:LaunchButton.Add_Click({
   $m = Get-SelectedModel
   if ($m -and (Test-ModelCanRun -Model $m)) {
-    Launch-CloudCodex -Model ([string]$m.slug)
-    $script:Window.Close()
+    try {
+      $script:LaunchButton.IsEnabled = $false
+      Set-Status "Launching Codex..."
+      Launch-CloudCodex -Model ([string]$m.slug)
+      $script:Window.Close()
+    } catch {
+      $script:LaunchButton.IsEnabled = $true
+      Set-Status "Launch failed: $($_.Exception.Message)"
+    }
   }
 })
 $script:SmokeMenuItem.Add_Click({
